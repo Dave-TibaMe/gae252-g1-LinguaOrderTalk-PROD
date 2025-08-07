@@ -1,0 +1,7 @@
+Flask
+pyodbc
+mysql-connector-python
+configparser
+gunicorn
+requests
+python-dotenv
