@@ -1,4 +1,4 @@
-# deploy-Slash.yml 20250807 1507
+# deploy-Slash.yml 20250807 1539
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -57,4 +57,5 @@ jobs:
             DB_USER=${{ env.DB_USER }}
             DB_PASSWORD=${{ env.DB_PASSWORD }}
             DB_DATABASE=${{ env.DB_DATABASE }}
-
+          # 加入 --no-cache 參數強制 Cloud Build 不使用快取
+          gcloud_args: '--no-cache'
