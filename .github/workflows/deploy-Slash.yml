@@ -1,4 +1,4 @@
-# deploy-Slash.yml 20250807 1503
+# deploy-Slash.yml 20250807 1507
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -10,6 +10,7 @@ on:
       - main
     paths:
       - 'deployment/Slash/**' # 只在 deployment/Slash 目錄下的檔案有變動時觸發
+      - '.github/workflows/deploy-Slash.yml' 
 
 # 設定環境變數
 env:
