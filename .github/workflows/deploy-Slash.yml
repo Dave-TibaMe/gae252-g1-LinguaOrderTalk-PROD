@@ -1,61 +1,57 @@
-# deploy-Slash.yml 20250807 1542
+# deploy-Slash.yml 20250807 1546 (v4 - Separated Build and Deploy steps)
 
-# GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
 
-# 設定觸發條件
 on:
   push:
     branches:
       - main
     paths:
-      - 'deployment/Slash/**' # 只在 deployment/Slash 目錄下的檔案有變動時觸發
-      - '.github/workflows/deploy-Slash.yml' 
+      - 'deployment/Slash/**'
+      - '.github/workflows/deploy-Slash.yml'
 
-# 設定環境變數
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   SERVICE_NAME: gae252-g1-cloud-run-slash
   REGION: asia-east1
-  # --- 資料庫環境變數 ---
   DB_TYPE: 'MYSQL'
   DB_HOST: ${{ secrets.DB_HOST }}
   DB_USER: ${{ secrets.DB_USER }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
   DB_DATABASE: ${{ secrets.DB_DATABASE }}
+  # 定義映像檔的名稱和位置
+  IMAGE_NAME: gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
 
-# 定義工作
 jobs:
   deploy:
     name: Build and Deploy to Cloud Run
     runs-on: ubuntu-latest
 
-    # 執行的步驟
     steps:
-      # 步驟 1: 從倉庫中拉取最新的程式碼
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步驟 2: 使用我們設定的 Secret 登入 Google Cloud
       - name: Authenticate to Google Cloud
         uses: 'google-github-actions/auth@v2'
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      # 步驟 3: 建置並部署到 Cloud Run
+      # [新步驟] 步驟 1: 使用 gcloud builds 進行建置，並停用快取
+      - name: Build and Push Docker image
+        run: |-
+          gcloud builds submit --tag "${{ env.IMAGE_NAME }}" --no-cache "deployment/Slash"
+
+      # [修改後步驟] 步驟 2: 部署上一步驟建置好的映像檔
       - name: Deploy to Cloud Run
         uses: 'google-github-actions/deploy-cloudrun@v2'
         with:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
-          # 告訴 Cloud Run 從 deployment/Slash 目錄下的 Dockerfile 建置
-          source: 'deployment/Slash'
-          # 將環境變數傳遞給 Cloud Run 服務
+          # 不再使用 'source'，而是直接指定 'image'
+          image: "${{ env.IMAGE_NAME }}"
           env_vars: |
             DB_TYPE=${{ env.DB_TYPE }}
             DB_HOST=${{ env.DB_HOST }}
             DB_USER=${{ env.DB_USER }}
             DB_PASSWORD=${{ env.DB_PASSWORD }}
             DB_DATABASE=${{ env.DB_DATABASE }}
-          # 加入 --no-cache 參數強制 Cloud Build 不使用快取
-          flags: '--no-cache'
