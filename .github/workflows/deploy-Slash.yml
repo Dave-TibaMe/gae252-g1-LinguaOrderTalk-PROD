@@ -1,3 +1,5 @@
+# deploy-Slash.yml 20250807 1455
+
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
 
@@ -12,7 +14,7 @@ on:
 # 設定環境變數
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  SERVICE_NAME: my-menu-service
+  SERVICE_NAME:gae252-g1-cloud-run-slash
   REGION: asia-east1
   # --- 資料庫環境變數 ---
   DB_TYPE: 'MYSQL'
