@@ -1,0 +1,1160 @@
+[
+  {
+    "lang_code": "din",
+    "lang_name": [
+      "丁卡文"
+    ]
+  },
+  {
+    "lang_code": "tr",
+    "lang_name": [
+      "土耳其文"
+    ]
+  },
+  {
+    "lang_code": "tk",
+    "lang_name": [
+      "土庫曼文"
+    ]
+  },
+  {
+    "lang_code": "zh-TW",
+    "lang_name": [
+      "中文 (繁體)"
+    ]
+  },
+  {
+    "lang_code": "zh",
+    "lang_name": [
+      "中文 (簡體)"
+    ]
+  },
+  {
+    "lang_code": "da",
+    "lang_name": [
+      "丹麥文"
+    ]
+  },
+  {
+    "lang_code": "ba",
+    "lang_name": [
+      "巴什噶爾文"
+    ]
+  },
+  {
+    "lang_code": "eu",
+    "lang_name": [
+      "巴斯克文"
+    ]
+  },
+  {
+    "lang_code": "bbc",
+    "lang_name": [
+      "巴塔克文"
+    ]
+  },
+  {
+    "lang_code": "btx",
+    "lang_name": [
+      "巴塔克卡羅文"
+    ]
+  },
+  {
+    "lang_code": "bts",
+    "lang_name": [
+      "巴塔克西馬隆貢文"
+    ]
+  },
+  {
+    "lang_code": "ja",
+    "lang_name": [
+      "日文"
+    ]
+  },
+  {
+    "lang_code": "bik",
+    "lang_name": [
+      "比科爾文"
+    ]
+  },
+  {
+    "lang_code": "mi",
+    "lang_name": [
+      "毛利文"
+    ]
+  },
+  {
+    "lang_code": "jw",
+    "lang_name": [
+      "爪哇文"
+    ]
+  },
+  {
+    "lang_code": "eo",
+    "lang_name": [
+      "世界語"
+    ]
+  },
+  {
+    "lang_code": "gaa",
+    "lang_name": [
+      "加文"
+    ]
+  },
+  {
+    "lang_code": "gl",
+    "lang_name": [
+      "加里西亞文"
+    ]
+  },
+  {
+    "lang_code": "ca",
+    "lang_name": [
+      "加泰隆尼亞文"
+    ]
+  },
+  {
+    "lang_code": "hi",
+    "lang_name": [
+      "北印度文"
+    ]
+  },
+  {
+    "lang_code": "kn",
+    "lang_name": [
+      "卡納達文"
+    ]
+  },
+  {
+    "lang_code": "gu",
+    "lang_name": [
+      "古加拉特文"
+    ]
+  },
+  {
+    "lang_code": "ss",
+    "lang_name": [
+      "史瓦帝文"
+    ]
+  },
+  {
+    "lang_code": "ne",
+    "lang_name": [
+      "尼泊爾文"
+    ]
+  },
+  {
+    "lang_code": "new",
+    "lang_name": [
+      "尼泊爾文 (尼瓦爾)"
+    ]
+  },
+  {
+    "lang_code": "br",
+    "lang_name": [
+      "布列塔尼文"
+    ]
+  },
+  {
+    "lang_code": "bua",
+    "lang_name": [
+      "布里亞特文"
+    ]
+  },
+  {
+    "lang_code": "fy",
+    "lang_name": [
+      "弗利然文"
+    ]
+  },
+  {
+    "lang_code": "bem",
+    "lang_name": [
+      "本巴文"
+    ]
+  },
+  {
+    "lang_code": "tn",
+    "lang_name": [
+      "札那文"
+    ]
+  },
+  {
+    "lang_code": "gn",
+    "lang_name": [
+      "瓜拉尼文"
+    ]
+  },
+  {
+    "lang_code": "be",
+    "lang_name": [
+      "白俄羅斯文"
+    ]
+  },
+  {
+    "lang_code": "lt",
+    "lang_name": [
+      "立陶宛文"
+    ]
+  },
+  {
+    "lang_code": "ilo",
+    "lang_name": [
+      "伊洛卡諾文"
+    ]
+  },
+  {
+    "lang_code": "ig",
+    "lang_name": [
+      "伊博文"
+    ]
+  },
+  {
+    "lang_code": "is",
+    "lang_name": [
+      "冰島文"
+    ]
+  },
+  {
+    "lang_code": "hu",
+    "lang_name": [
+      "匈牙利文"
+    ]
+  },
+  {
+    "lang_code": "id",
+    "lang_name": [
+      "印尼文"
+    ]
+  },
+  {
+    "lang_code": "su",
+    "lang_name": [
+      "印尼巽他文"
+    ]
+  },
+  {
+    "lang_code": "ktu",
+    "lang_name": [
+      "吉土巴文"
+    ]
+  },
+  {
+    "lang_code": "ky",
+    "lang_name": [
+      "吉爾吉斯文"
+    ]
+  },
+  {
+    "lang_code": "dov",
+    "lang_name": [
+      "多姆貝文"
+    ]
+  },
+  {
+    "lang_code": "lus",
+    "lang_name": [
+      "米佐文"
+    ]
+  },
+  {
+    "lang_code": "min",
+    "lang_name": [
+      "米南文"
+    ]
+  },
+  {
+    "lang_code": "ay",
+    "lang_name": [
+      "艾馬拉文"
+    ]
+  },
+  {
+    "lang_code": "scn",
+    "lang_name": [
+      "西西里島文"
+    ]
+  },
+  {
+    "lang_code": "szl",
+    "lang_name": [
+      "西里西亞文"
+    ]
+  },
+  {
+    "lang_code": "es",
+    "lang_name": [
+      "西班牙文"
+    ]
+  },
+  {
+    "lang_code": "qu",
+    "lang_name": [
+      "克丘亞文"
+    ]
+  },
+  {
+    "lang_code": "crh",
+    "lang_name": [
+      "克里米亞韃靼文"
+    ]
+  },
+  {
+    "lang_code": "kri",
+    "lang_name": [
+      "克里奧文"
+    ]
+  },
+  {
+    "lang_code": "hr",
+    "lang_name": [
+      "克羅埃西亞文"
+    ]
+  },
+  {
+    "lang_code": "lij",
+    "lang_name": [
+      "利古里亞文"
+    ]
+  },
+  {
+    "lang_code": "nus",
+    "lang_name": [
+      "努爾文"
+    ]
+  },
+  {
+    "lang_code": "iw",
+    "lang_name": [
+      "希伯來文"
+    ]
+  },
+  {
+    "lang_code": "hil",
+    "lang_name": [
+      "希里蓋農文"
+    ]
+  },
+  {
+    "lang_code": "el",
+    "lang_name": [
+      "希臘文"
+    ]
+  },
+  {
+    "lang_code": "bew",
+    "lang_name": [
+      "貝塔維文"
+    ]
+  },
+  {
+    "lang_code": "pam",
+    "lang_name": [
+      "邦板牙文"
+    ]
+  },
+  {
+    "lang_code": "pag",
+    "lang_name": [
+      "邦阿西楠文"
+    ]
+  },
+  {
+    "lang_code": "hy",
+    "lang_name": [
+      "亞美尼亞文"
+    ]
+  },
+  {
+    "lang_code": "az",
+    "lang_name": [
+      "亞塞拜然文"
+    ]
+  },
+  {
+    "lang_code": "ace",
+    "lang_name": [
+      "亞齊文"
+    ]
+  },
+  {
+    "lang_code": "nso",
+    "lang_name": [
+      "佩蒂文"
+    ]
+  },
+  {
+    "lang_code": "ny",
+    "lang_name": [
+      "奇切瓦文"
+    ]
+  },
+  {
+    "lang_code": "cgg",
+    "lang_name": [
+      "奇加文"
+    ]
+  },
+  {
+    "lang_code": "bn",
+    "lang_name": [
+      "孟加拉文"
+    ]
+  },
+  {
+    "lang_code": "ts",
+    "lang_name": [
+      "宗卡文"
+    ]
+  },
+  {
+    "lang_code": "dz",
+    "lang_name": [
+      "宗喀文"
+    ]
+  },
+  {
+    "lang_code": "pap",
+    "lang_name": [
+      "帕皮阿門托文"
+    ]
+  },
+  {
+    "lang_code": "ps",
+    "lang_name": [
+      "帕施圖文"
+    ]
+  },
+  {
+    "lang_code": "la",
+    "lang_name": [
+      "拉丁文"
+    ]
+  },
+  {
+    "lang_code": "ltg",
+    "lang_name": [
+      "拉特加萊文"
+    ]
+  },
+  {
+    "lang_code": "lv",
+    "lang_name": [
+      "拉脫維亞文"
+    ]
+  },
+  {
+    "lang_code": "ln",
+    "lang_name": [
+      "林格拉文"
+    ]
+  },
+  {
+    "lang_code": "li",
+    "lang_name": [
+      "林堡文"
+    ]
+  },
+  {
+    "lang_code": "fr",
+    "lang_name": [
+      "法文"
+    ]
+  },
+  {
+    "lang_code": "bs",
+    "lang_name": [
+      "波士尼亞文"
+    ]
+  },
+  {
+    "lang_code": "fa",
+    "lang_name": [
+      "波斯文"
+    ]
+  },
+  {
+    "lang_code": "pl",
+    "lang_name": [
+      "波蘭文"
+    ]
+  },
+  {
+    "lang_code": "fi",
+    "lang_name": [
+      "芬蘭文"
+    ]
+  },
+  {
+    "lang_code": "ab",
+    "lang_name": [
+      "阿布哈茲文"
+    ]
+  },
+  {
+    "lang_code": "awa",
+    "lang_name": [
+      "阿瓦德文"
+    ]
+  },
+  {
+    "lang_code": "am",
+    "lang_name": [
+      "阿姆哈拉文"
+    ]
+  },
+  {
+    "lang_code": "ar",
+    "lang_name": [
+      "阿拉伯文"
+    ]
+  },
+  {
+    "lang_code": "ach",
+    "lang_name": [
+      "阿喬利文"
+    ]
+  },
+  {
+    "lang_code": "sq",
+    "lang_name": [
+      "阿爾巴尼亞文"
+    ]
+  },
+  {
+    "lang_code": "alz",
+    "lang_name": [
+      "阿盧爾文"
+    ]
+  },
+  {
+    "lang_code": "as",
+    "lang_name": [
+      "阿薩姆文"
+    ]
+  },
+  {
+    "lang_code": "ru",
+    "lang_name": [
+      "俄文"
+    ]
+  },
+  {
+    "lang_code": "bg",
+    "lang_name": [
+      "保加利亞文"
+    ]
+  },
+  {
+    "lang_code": "sd",
+    "lang_name": [
+      "信德文"
+    ]
+  },
+  {
+    "lang_code": "af",
+    "lang_name": [
+      "南非文"
+    ]
+  },
+  {
+    "lang_code": "xh",
+    "lang_name": [
+      "南非柯薩文"
+    ]
+  },
+  {
+    "lang_code": "zu",
+    "lang_name": [
+      "南非祖魯文"
+    ]
+  },
+  {
+    "lang_code": "kk",
+    "lang_name": [
+      "哈薩克文"
+    ]
+  },
+  {
+    "lang_code": "ak",
+    "lang_name": [
+      "契維文"
+    ]
+  },
+  {
+    "lang_code": "cy",
+    "lang_name": [
+      "威爾斯文"
+    ]
+  },
+  {
+    "lang_code": "ban",
+    "lang_name": [
+      "峇里文"
+    ]
+  },
+  {
+    "lang_code": "hrx",
+    "lang_name": [
+      "洪斯呂克文"
+    ]
+  },
+  {
+    "lang_code": "co",
+    "lang_name": [
+      "科西嘉文"
+    ]
+  },
+  {
+    "lang_code": "hmn",
+    "lang_name": [
+      "苗文"
+    ]
+  },
+  {
+    "lang_code": "en",
+    "lang_name": [
+      "英文"
+    ]
+  },
+  {
+    "lang_code": "dv",
+    "lang_name": [
+      "迪維希文"
+    ]
+  },
+  {
+    "lang_code": "lmo",
+    "lang_name": [
+      "倫巴底文"
+    ]
+  },
+  {
+    "lang_code": "ee",
+    "lang_name": [
+      "埃維文"
+    ]
+  },
+  {
+    "lang_code": "haw",
+    "lang_name": [
+      "夏威夷文"
+    ]
+  },
+  {
+    "lang_code": "ku",
+    "lang_name": [
+      "庫德文 (庫爾曼吉文)"
+    ]
+  },
+  {
+    "lang_code": "ckb",
+    "lang_name": [
+      "庫德文 (索拉尼文)"
+    ]
+  },
+  {
+    "lang_code": "nr",
+    "lang_name": [
+      "恩德貝萊文 (南)"
+    ]
+  },
+  {
+    "lang_code": "no",
+    "lang_name": [
+      "挪威文"
+    ]
+  },
+  {
+    "lang_code": "pa",
+    "lang_name": [
+      "旁遮普文 (古木基)"
+    ]
+  },
+  {
+    "lang_code": "pa-Arab",
+    "lang_name": [
+      "旁遮普文 (沙木基)"
+    ]
+  },
+  {
+    "lang_code": "sg",
+    "lang_name": [
+      "桑戈文"
+    ]
+  },
+  {
+    "lang_code": "th",
+    "lang_name": [
+      "泰文"
+    ]
+  },
+  {
+    "lang_code": "ta",
+    "lang_name": [
+      "泰米爾文"
+    ]
+  },
+  {
+    "lang_code": "te",
+    "lang_name": [
+      "泰盧固文"
+    ]
+  },
+  {
+    "lang_code": "ht",
+    "lang_name": [
+      "海地克里奧文"
+    ]
+  },
+  {
+    "lang_code": "lg",
+    "lang_name": [
+      "烏干達文"
+    ]
+  },
+  {
+    "lang_code": "uk",
+    "lang_name": [
+      "烏克蘭文"
+    ]
+  },
+  {
+    "lang_code": "uz",
+    "lang_name": [
+      "烏茲別克文"
+    ]
+  },
+  {
+    "lang_code": "ur",
+    "lang_name": [
+      "烏爾都文"
+    ]
+  },
+  {
+    "lang_code": "bm",
+    "lang_name": [
+      "班巴拉文"
+    ]
+  },
+  {
+    "lang_code": "so",
+    "lang_name": [
+      "索馬里文"
+    ]
+  },
+  {
+    "lang_code": "chm",
+    "lang_name": [
+      "草原馬里文"
+    ]
+  },
+  {
+    "lang_code": "gom",
+    "lang_name": [
+      "貢根文"
+    ]
+  },
+  {
+    "lang_code": "mt",
+    "lang_name": [
+      "馬耳他文"
+    ]
+  },
+  {
+    "lang_code": "ms",
+    "lang_name": [
+      "馬來文"
+    ]
+  },
+  {
+    "lang_code": "ms-Arab",
+    "lang_name": [
+      "馬來文 (爪夷)"
+    ]
+  },
+  {
+    "lang_code": "mk",
+    "lang_name": [
+      "馬其頓文"
+    ]
+  },
+  {
+    "lang_code": "mg",
+    "lang_name": [
+      "馬拉加斯文"
+    ]
+  },
+  {
+    "lang_code": "mr",
+    "lang_name": [
+      "馬拉地文"
+    ]
+  },
+  {
+    "lang_code": "ml",
+    "lang_name": [
+      "馬拉雅拉姆文"
+    ]
+  },
+  {
+    "lang_code": "km",
+    "lang_name": [
+      "高棉文"
+    ]
+  },
+  {
+    "lang_code": "ceb",
+    "lang_name": [
+      "宿霧文"
+    ]
+  },
+  {
+    "lang_code": "cs",
+    "lang_name": [
+      "捷克文"
+    ]
+  },
+  {
+    "lang_code": "mak",
+    "lang_name": [
+      "望加錫文"
+    ]
+  },
+  {
+    "lang_code": "mni-Mtei",
+    "lang_name": [
+      "梅泰文 (曼尼普爾文)"
+    ]
+  },
+  {
+    "lang_code": "sa",
+    "lang_name": [
+      "梵文"
+    ]
+  },
+  {
+    "lang_code": "sn",
+    "lang_name": [
+      "紹納文"
+    ]
+  },
+  {
+    "lang_code": "nl",
+    "lang_name": [
+      "荷蘭文"
+    ]
+  },
+  {
+    "lang_code": "bho",
+    "lang_name": [
+      "博杰普爾文"
+    ]
+  },
+  {
+    "lang_code": "ka",
+    "lang_name": [
+      "喬治亞文"
+    ]
+  },
+  {
+    "lang_code": "oc",
+    "lang_name": [
+      "奥克文"
+    ]
+  },
+  {
+    "lang_code": "ff",
+    "lang_name": [
+      "富拉尼文"
+    ]
+  },
+  {
+    "lang_code": "fj",
+    "lang_name": [
+      "斐濟文"
+    ]
+  },
+  {
+    "lang_code": "sw",
+    "lang_name": [
+      "斯瓦希里文"
+    ]
+  },
+  {
+    "lang_code": "sk",
+    "lang_name": [
+      "斯洛伐克文"
+    ]
+  },
+  {
+    "lang_code": "sl",
+    "lang_name": [
+      "斯洛維尼亞文"
+    ]
+  },
+  {
+    "lang_code": "cnh",
+    "lang_name": [
+      "欽邦哈卡文"
+    ]
+  },
+  {
+    "lang_code": "yua",
+    "lang_name": [
+      "猶加敦馬雅文"
+    ]
+  },
+  {
+    "lang_code": "tl",
+    "lang_name": [
+      "菲律賓文"
+    ]
+  },
+  {
+    "lang_code": "vi",
+    "lang_name": [
+      "越南文"
+    ]
+  },
+  {
+    "lang_code": "rn",
+    "lang_name": [
+      "隆地文"
+    ]
+  },
+  {
+    "lang_code": "tg",
+    "lang_name": [
+      "塔吉克文"
+    ]
+  },
+  {
+    "lang_code": "sr",
+    "lang_name": [
+      "塞爾維亞文"
+    ]
+  },
+  {
+    "lang_code": "om",
+    "lang_name": [
+      "奧羅莫文"
+    ]
+  },
+  {
+    "lang_code": "yi",
+    "lang_name": [
+      "意第緒文"
+    ]
+  },
+  {
+    "lang_code": "et",
+    "lang_name": [
+      "愛沙尼亞文"
+    ]
+  },
+  {
+    "lang_code": "ga",
+    "lang_name": [
+      "愛爾蘭文"
+    ]
+  },
+  {
+    "lang_code": "cv",
+    "lang_name": [
+      "楚瓦什文"
+    ]
+  },
+  {
+    "lang_code": "sv",
+    "lang_name": [
+      "瑞典文"
+    ]
+  },
+  {
+    "lang_code": "st",
+    "lang_name": [
+      "瑟索托文"
+    ]
+  },
+  {
+    "lang_code": "yue",
+    "lang_name": [
+      "粵語"
+    ]
+  },
+  {
+    "lang_code": "it",
+    "lang_name": [
+      "義大利文"
+    ]
+  },
+  {
+    "lang_code": "pt",
+    "lang_name": [
+      "葡萄牙文 (巴西)"
+    ]
+  },
+  {
+    "lang_code": "ti",
+    "lang_name": [
+      "蒂格里亞文"
+    ]
+  },
+  {
+    "lang_code": "doi",
+    "lang_name": [
+      "道格里文"
+    ]
+  },
+  {
+    "lang_code": "ug",
+    "lang_name": [
+      "維吾爾文"
+    ]
+  },
+  {
+    "lang_code": "mn",
+    "lang_name": [
+      "蒙古文"
+    ]
+  },
+  {
+    "lang_code": "ha",
+    "lang_name": [
+      "豪沙文"
+    ]
+  },
+  {
+    "lang_code": "lo",
+    "lang_name": [
+      "寮文"
+    ]
+  },
+  {
+    "lang_code": "de",
+    "lang_name": [
+      "德文"
+    ]
+  },
+  {
+    "lang_code": "tet",
+    "lang_name": [
+      "德頓文"
+    ]
+  },
+  {
+    "lang_code": "shn",
+    "lang_name": [
+      "撣文"
+    ]
+  },
+  {
+    "lang_code": "or",
+    "lang_name": [
+      "歐利亞文 (奧里雅文)"
+    ]
+  },
+  {
+    "lang_code": "my",
+    "lang_name": [
+      "緬甸文"
+    ]
+  },
+  {
+    "lang_code": "rw",
+    "lang_name": [
+      "盧安達文"
+    ]
+  },
+  {
+    "lang_code": "lb",
+    "lang_name": [
+      "盧森堡文"
+    ]
+  },
+  {
+    "lang_code": "luo",
+    "lang_name": [
+      "盧奧文"
+    ]
+  },
+  {
+    "lang_code": "si",
+    "lang_name": [
+      "錫蘭文"
+    ]
+  },
+  {
+    "lang_code": "yo",
+    "lang_name": [
+      "優魯巴文"
+    ]
+  },
+  {
+    "lang_code": "crs",
+    "lang_name": [
+      "賽席爾克里奧爾文"
+    ]
+  },
+  {
+    "lang_code": "mai",
+    "lang_name": [
+      "邁蒂利文"
+    ]
+  },
+  {
+    "lang_code": "ko",
+    "lang_name": [
+      "韓文"
+    ]
+  },
+  {
+    "lang_code": "sm",
+    "lang_name": [
+      "薩摩亞文"
+    ]
+  },
+  {
+    "lang_code": "rom",
+    "lang_name": [
+      "羅姆文"
+    ]
+  },
+  {
+    "lang_code": "ro",
+    "lang_name": [
+      "羅馬尼亞文"
+    ]
+  },
+  {
+    "lang_code": "gd",
+    "lang_name": [
+      "蘇格蘭蓋爾文"
+    ]
+  },
+  {
+    "lang_code": "tt",
+    "lang_name": [
+      "韃靼文"
+    ]
+  },
+  {
+    "lang_code": "he",
+    "lang_name": [
+      "希伯來文"
+    ]
+  },
+  {
+    "lang_code": "jv",
+    "lang_name": [
+      "爪哇文"
+    ]
+  },
+  {
+    "lang_code": "zh-CN",
+    "lang_name": [
+      "中文 (簡體)"
+    ]
+  }
+]

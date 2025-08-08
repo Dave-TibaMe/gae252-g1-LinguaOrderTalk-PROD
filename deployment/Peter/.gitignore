@@ -1,0 +1,9 @@
+# 忽略 Python 虛擬環境
+venv/
+
+# 忽略 Python 的快取檔案
+__pycache__/
+
+# 忽略環境變數檔案
+.env
+env
