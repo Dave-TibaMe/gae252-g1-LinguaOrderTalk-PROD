@@ -504,3 +504,41 @@ async def process_language_text(line_user_id: str, text: str, db: AsyncSession) 
         else:
             prompt_text = await get_translated_text(user, "prompt_change_language")
             return [TextMessage(text=prompt_text)]
+
+# 將以下程式碼添加到您的 app/main.py 檔案中
+@app.get("/health")
+async def health_check():
+    """
+    健康檢查端點，用於 Docker 容器健康監控
+    """
+    try:
+        # 檢查資料庫連線
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(1))
+            result.scalar_one()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "service": "LinguaOrderTalk Bot",
+            "database": "connected"
+        }
+    except Exception as e:
+        logging.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail={
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "service": "LinguaOrderTalk Bot",
+            "error": str(e)
+        })
+
+@app.get("/")
+async def root():
+    """
+    根路徑端點
+    """
+    return {
+        "service": "LinguaOrderTalk Bot Service",
+        "status": "running",
+        "version": "1.0.0"
+    }

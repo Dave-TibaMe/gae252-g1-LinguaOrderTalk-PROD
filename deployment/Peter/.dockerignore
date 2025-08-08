@@ -1,0 +1,84 @@
+# Git 相關
+.git
+.gitignore
+README.md
+.gitattributes
+
+# Python 相關
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# 虛擬環境
+env
+venv
+ENV
+env.bak
+venv.bak
+
+# IDE 相關
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS 相關
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 開發相關
+*.md
+docs/
+tests/
+.pytest_cache/
+
+# 暫存檔案
+*.tmp
+*.temp
+temp/
+tmp/
+
+# 日誌檔案
+logs/
+*.log
+
+# 建置相關
+build/
+dist/
+*.egg-info/
+
+# 資料庫檔案 (如果有本地資料庫)
+*.db
+*.sqlite
+*.sqlite3
+
+# 環境變數檔案 (生產環境應該透過其他方式設定)
+# 注意：開發時可能需要 .env，請根據需求調整
+# .env
+
+# Docker 相關
+Dockerfile*
+docker-compose*
+.dockerignore
