@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import logging
+from datetime import datetime  # <-- 加入這行
 from typing import List
 from urllib.parse import parse_qsl
 import aiohttp # <-- 匯入 aiohttp
@@ -506,6 +507,7 @@ async def process_language_text(line_user_id: str, text: str, db: AsyncSession) 
             return [TextMessage(text=prompt_text)]
 
 # 將以下程式碼添加到您的 app/main.py 檔案中
+
 @app.get("/health")
 async def health_check():
     """
