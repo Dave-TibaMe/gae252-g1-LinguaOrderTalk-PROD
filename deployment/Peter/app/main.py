@@ -541,43 +541,39 @@ async def handle_location_message(event: MessageEvent, db: AsyncSession):
             pass
 
         if title and address:
-            if Config.MAPS_API_KEY:
-                # 情境一：使用者分享的是「地標」，執行步驟 A (驗證)
-                logging.info(f"Executing Text Search for landmark: '{title}'")
-                text_search_url = "https://places.googleapis.com/v1/places:searchText"
-                text_headers = {
-                    "Content-Type": "application/json",
-                    "X-Goog-Api-Key": Config.MAPS_API_KEY,
-                    "X-Goog-FieldMask": "places.id,places.displayName,places.photos,places.types,places.location"
-                }
-                text_payload = {
-                    "textQuery": f"{title} {address}",
-                    "maxResultCount": 1,
-                    "locationBias": {
-                        "circle": {"center": { "latitude": user_lat, "longitude": user_lng }, "radius": 50.0} # 縮小偏差半徑以求精準
-                    },
-                    "languageCode": "zh-TW"
-                }
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(text_search_url, headers=text_headers, json=text_payload) as response:
-                            response.raise_for_status()
-                            text_result = await response.json()
-                            landmark_place = text_result.get("places", [None])[0]
-                            
-                            # 步驟 C (組合): 如果驗證的地標是餐廳，就把它放到列表最前面
-                            if landmark_place and "restaurant" in landmark_place.get('types', []):
-                                logging.info(f"Landmark is a restaurant, prepending to the list.")
-                                # 移除 Nearby Search 結果中可能重複的地標
-                                final_places = [p for p in final_places if p.get('id') != landmark_place.get('id')]
-                                # 將地標插入到最前面
-                                final_places.insert(0, landmark_place)
-                except Exception as e:
-                    logging.error(f"Google Text Search API error: {e}")
-                    # Text Search 失敗不影響 Nearby Search 的結果
-            else:
-                # 如果沒有設定 API Key，則記錄一條警告並安全地略過此區塊
-                logging.warning("Skipping Google Text Search because MAPS_API_KEY is not configured.")
+            # 情境一：使用者分享的是「地標」，執行步驟 A (驗證)
+            logging.info(f"Executing Text Search for landmark: '{title}'")
+            text_search_url = "https://places.googleapis.com/v1/places:searchText"
+            text_headers = {
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": Config.MAPS_API_KEY,
+                "X-Goog-FieldMask": "places.id,places.displayName,places.photos,places.types,places.location"
+            }
+            text_payload = {
+                "textQuery": f"{title} {address}",
+                "maxResultCount": 1,
+                "locationBias": {
+                    "circle": {"center": { "latitude": user_lat, "longitude": user_lng }, "radius": 50.0} # 縮小偏差半徑以求精準
+                },
+                "languageCode": "zh-TW"
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(text_search_url, headers=text_headers, json=text_payload) as response:
+                        response.raise_for_status()
+                        text_result = await response.json()
+                        landmark_place = text_result.get("places", [None])[0]
+                        
+                        # 步驟 C (組合): 如果驗證的地標是餐廳，就把它放到列表最前面
+                        if landmark_place and "restaurant" in landmark_place.get('types', []):
+                            logging.info(f"Landmark is a restaurant, prepending to the list.")
+                            # 移除 Nearby Search 結果中可能重複的地標
+                            final_places = [p for p in final_places if p.get('id') != landmark_place.get('id')]
+                            # 將地標插入到最前面
+                            final_places.insert(0, landmark_place)
+            except Exception as e:
+                logging.error(f"Google Text Search API error: {e}")
+                # Text Search 失敗不影響 Nearby Search 的結果
 
         if not final_places:
             not_found_text = await get_translated_text(user, "no_stores_found")

@@ -21,7 +21,7 @@ env:
   CHANNEL_ACCESS_TOKEN:  ${{ secrets.CHANNEL_ACCESS_TOKEN }}
   CHANNEL_SECRET: ${{ secrets.CHANNEL_SECRET }}
   LIFF_ID: ${{ secrets.LIFF_ID }}
-  Maps_API_KEY: ${{ secrets.Maps_API_KEY }}
+  MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
   DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
 # 定義工作
@@ -55,7 +55,7 @@ jobs:
             CHANNEL_ACCESS_TOKEN=${{ env.CHANNEL_ACCESS_TOKEN }}
             CHANNEL_SECRET=${{ env.CHANNEL_SECRET }}
             LIFF_ID=${{ env.LIFF_ID }}
-            Maps_API_KEY=${{ env.Maps_API_KEY }}
+            MAPS_API_KEY=${{ env.MAPS_API_KEY }}
             DATABASE_URL=${{ env.DATABASE_URL }}
           #GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
