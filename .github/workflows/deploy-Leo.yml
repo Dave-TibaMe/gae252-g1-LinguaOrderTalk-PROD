@@ -1,0 +1,67 @@
+# deploy-Leo.yml 20250813 2335
+
+# GitHub Actions workflow 的名稱
+name: Deploy to Google Cloud Run
+
+# 設定觸發條件
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'deployment/Leo/ordering-helper-backend/**' # 只在 deployment/Leo/ordering-helper-backend 目錄下的檔案有變動時觸發
+      - '.github/workflows/deploy-Leo.yml' 
+
+# 設定環境變數
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: gae252-g1-cloud-run-leo
+  REGION: asia-east1
+  # --- 資料庫環境變數 ---
+  AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+  AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
+  DB_HOST: ${{ secrets.DB_HOST }}
+  DB_USER: ${{ secrets.DB_USER }}
+  DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  DB_DATABASE: ${{ secrets.DB_DATABASE }}
+  LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.CHANNEL_ACCESS_TOKEN }}
+  LINE_CHANNEL_SECRET: ${{ secrets.CHANNEL_SECRET }}
+
+# 定義工作
+jobs:
+  deploy:
+    name: Build and Deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    # 執行的步驟
+    steps:
+      # 步驟 1: 從倉庫中拉取最新的程式碼
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步驟 2: 使用我們設定的 Secret 登入 Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      # 步驟 3: 建置並部署到 Cloud Run
+      - name: Deploy to Cloud Run
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          # 告訴 Cloud Run 從 deployment/Leo/ordering-helper-backend 目錄下的 Dockerfile 建置
+          source: 'deployment/Leo//ordering-helper-backend'
+          # 將環境變數傳遞給 Cloud Run 服務
+          env_vars: |
+            AZURE_SPEECH_KEY=${{ env.AZURE_SPEECH_KEY }}
+            AZURE_SPEECH_REGION=${{ env.AZURE_SPEECH_REGION }}
+            DB_HOST=${{ env.DB_HOST }}
+            DB_USER=${{ env.DB_USER }}
+            DB_PASSWORD=${{ env.DB_PASSWORD }}
+            DB_DATABASE=${{ env.DB_DATABASE }}
+            LINE_CHANNEL_ACCESS_TOKEN=${{ env.LINE_CHANNEL_ACCESS_TOKEN }}
+            LINE_CHANNEL_SECRET=${{ env.LINE_CHANNEL_SECRET }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+

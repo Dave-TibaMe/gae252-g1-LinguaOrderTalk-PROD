@@ -1,0 +1,152 @@
+{% extends "admin/base.html" %}
+
+{% block title %}店家管理 - 點餐傳聲筒後台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="h3 mb-4">
+            <i class="fas fa-store"></i> 店家管理
+        </h1>
+    </div>
+</div>
+
+<!-- 店家列表 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-list"></i> 店家列表
+                </h6>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addStoreModal">
+                    <i class="fas fa-plus"></i> 新增店家
+                </button>
+            </div>
+            <div class="card-body">
+                {% if stores %}
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="storesTable" width="100%" cellspacing="0">
+                        <thead>
+                            <tr>
+                                <th>店家ID</th>
+                                <th>店家名稱</th>
+                                <th>合作等級</th>
+                                <th>地址</th>
+                                <th>建立時間</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for store in stores %}
+                            <tr>
+                                <td>{{ store.store_id }}</td>
+                                <td>{{ store.store_name }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if store.partner_level == 3 else 'warning' if store.partner_level == 2 else 'info' }}">
+                                        {{ store.partner_level }}
+                                    </span>
+                                </td>
+                                <td>{{ store.address or '未設定' }}</td>
+                                <td>{{ store.created_at.strftime('%Y-%m-%d %H:%M') if store.created_at else '未知' }}</td>
+                                <td>
+                                    <a href="{{ url_for('admin_panel.store_menus', store_id=store.store_id) }}" class="btn btn-info btn-sm">
+                                        <i class="fas fa-utensils"></i> 菜單
+                                    </a>
+                                    <button class="btn btn-warning btn-sm" onclick="editStore({{ store.store_id }})">
+                                        <i class="fas fa-edit"></i> 編輯
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-store fa-3x text-gray-300 mb-3"></i>
+                    <p class="text-gray-500">目前沒有店家資料</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增店家 Modal -->
+<div class="modal fade" id="addStoreModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">新增店家</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStoreForm">
+                    <div class="mb-3">
+                        <label for="storeName" class="form-label">店家名稱</label>
+                        <input type="text" class="form-control" id="storeName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="partnerLevel" class="form-label">合作等級</label>
+                        <select class="form-control" id="partnerLevel">
+                            <option value="1">等級 1</option>
+                            <option value="2">等級 2</option>
+                            <option value="3">等級 3</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="address" class="form-label">地址</label>
+                        <input type="text" class="form-control" id="address">
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">描述</label>
+                        <textarea class="form-control" id="description" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="addStore()">新增</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function addStore() {
+    const formData = {
+        store_name: document.getElementById('storeName').value,
+        partner_level: parseInt(document.getElementById('partnerLevel').value),
+        address: document.getElementById('address').value,
+        description: document.getElementById('description').value
+    };
+    
+    fetch('/admin/api/stores', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.message) {
+            alert('店家新增成功！');
+            location.reload();
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('新增失敗，請重試');
+    });
+}
+
+function editStore(storeId) {
+    // TODO: 實作編輯功能
+    alert('編輯功能開發中...');
+}
+</script>
+{% endblock %} 

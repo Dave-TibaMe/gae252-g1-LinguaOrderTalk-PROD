@@ -1,0 +1,199 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{{ store.store_name }} - 菜單管理{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="h3 mb-4">
+            <i class="fas fa-utensils"></i> {{ store.store_name }} - 菜單管理
+        </h1>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('admin.stores') }}">店家管理</a></li>
+                <li class="breadcrumb-item active">{{ store.store_name }}</li>
+            </ol>
+        </nav>
+    </div>
+</div>
+
+<!-- 店家資訊 -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-info-circle"></i> 店家資訊
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <p><strong>店家ID：</strong>{{ store.store_id }}</p>
+                        <p><strong>店家名稱：</strong>{{ store.store_name }}</p>
+                        <p><strong>合作等級：</strong>
+                            <span class="badge bg-{{ 'success' if store.partner_level == 3 else 'warning' if store.partner_level == 2 else 'info' }}">
+                                {{ store.partner_level }}
+                            </span>
+                        </p>
+                    </div>
+                    <div class="col-md-6">
+                        <p><strong>地址：</strong>{{ store.address or '未設定' }}</p>
+                        <p><strong>建立時間：</strong>{{ store.created_at.strftime('%Y-%m-%d %H:%M') if store.created_at else '未知' }}</p>
+                        <p><strong>描述：</strong>{{ store.description or '無' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 菜單列表 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-list"></i> 菜單列表
+                </h6>
+                <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addMenuModal">
+                    <i class="fas fa-plus"></i> 新增菜單
+                </button>
+            </div>
+            <div class="card-body">
+                {% if menus %}
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="menusTable" width="100%" cellspacing="0">
+                        <thead>
+                            <tr>
+                                <th>菜單ID</th>
+                                <th>版本</th>
+                                <th>建立時間</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for menu in menus %}
+                            <tr>
+                                <td>{{ menu.menu_id }}</td>
+                                <td>{{ menu.version }}</td>
+                                <td>{{ menu.created_at.strftime('%Y-%m-%d %H:%M') if menu.created_at else '未知' }}</td>
+                                <td>
+                                    <button class="btn btn-info btn-sm" onclick="viewMenuItems({{ menu.menu_id }})">
+                                        <i class="fas fa-eye"></i> 查看品項
+                                    </button>
+                                    <button class="btn btn-warning btn-sm" onclick="editMenu({{ menu.menu_id }})">
+                                        <i class="fas fa-edit"></i> 編輯
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" onclick="deleteMenu({{ menu.menu_id }})">
+                                        <i class="fas fa-trash"></i> 刪除
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-utensils fa-3x text-gray-300 mb-3"></i>
+                    <p class="text-gray-500">目前沒有菜單資料</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增菜單 Modal -->
+<div class="modal fade" id="addMenuModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">新增菜單</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addMenuForm">
+                    <div class="mb-3">
+                        <label for="menuVersion" class="form-label">菜單版本</label>
+                        <input type="text" class="form-control" id="menuVersion" value="1.0" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="menuDescription" class="form-label">描述</label>
+                        <textarea class="form-control" id="menuDescription" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="addMenu()">新增</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 菜單品項 Modal -->
+<div class="modal fade" id="menuItemsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">菜單品項</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="menuItemsContent">
+                    <!-- 菜單品項內容將在這裡動態載入 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function addMenu() {
+    const formData = {
+        store_id: {{ store.store_id }},
+        version: document.getElementById('menuVersion').value,
+        description: document.getElementById('menuDescription').value
+    };
+    
+    // TODO: 實作新增菜單的 API 呼叫
+    alert('新增菜單功能開發中...');
+    $('#addMenuModal').modal('hide');
+}
+
+function viewMenuItems(menuId) {
+    // TODO: 實作查看菜單品項功能
+    alert('查看菜單品項功能開發中...');
+}
+
+function editMenu(menuId) {
+    // TODO: 實作編輯菜單功能
+    alert('編輯菜單功能開發中...');
+}
+
+function deleteMenu(menuId) {
+    if (confirm('確定要刪除這個菜單嗎？')) {
+        // TODO: 實作刪除菜單功能
+        alert('刪除菜單功能開發中...');
+    }
+}
+
+// 初始化 DataTable
+$(document).ready(function() {
+    $('#menusTable').DataTable({
+        "order": [[ 2, "desc" ]], // 按建立時間降序排列
+        "pageLength": 25,
+        "language": {
+            "url": "//cdn.datatables.net/plug-ins/1.10.24/i18n/Chinese-traditional.json"
+        }
+    });
+});
+</script>
+{% endblock %} 

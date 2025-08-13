@@ -1,0 +1,15 @@
+{
+  "routes": [
+    {
+      "route": "/api/*",
+      "rewrite": "https://ordering-helper-backend-1095766716155.asia-east1.run.app/api/{*}"
+    }
+  ],
+  "globalHeaders": {
+    "Access-Control-Allow-Origin": "https://green-beach-0f9762500.1.azurestaticapps.net"
+  },
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/images/*", "/css/*", "/js/*", "/api/*"]
+  }
+}

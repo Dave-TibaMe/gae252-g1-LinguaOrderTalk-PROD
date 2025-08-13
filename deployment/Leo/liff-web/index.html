@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>點餐傳聲筒 - 點餐介面</title>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 Google Fonts (Inter) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', 'Noto Sans TC', sans-serif; }
+        button:focus { outline: none; }
+        .cart-item-enter { opacity: 0; transform: translateY(-10px); transition: all 0.3s ease; }
+        /* 隱藏預設的檔案上傳按鈕 */
+        input[type="file"] { display: none; }
+        
+        /* 顯示店家ID/語言那行 */
+        #lang-info {
+            display: block;
+        }
+        
+        /* 上傳介面收合狀態的樣式 */
+        #ocr-section.collapsed {
+            background: linear-gradient(to bottom, rgba(255,255,255,1) 0%, rgba(255,255,255,0.9) 70%, rgba(255,255,255,0.7) 100%);
+            border: 1px solid #e5e7eb;
+            position: relative;
+        }
+        
+        #ocr-section.collapsed::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 20px;
+            background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.9));
+            pointer-events: none;
+        }
+        
+        /* 菜單列表的樣式優化 */
+        #menu-list {
+            scroll-margin-top: 20px;
+        }
+        
+        /* 收合按鈕的樣式 */
+        .collapse-button {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        
+        .collapse-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+
+    <div id="app" class="container mx-auto max-w-lg p-4 pb-48">
+
+        <!-- 讀取中畫面 -->
+        <div id="loading" class="text-center py-20">
+            <p class="text-gray-500">正在準備點餐環境...</p>
+        </div>
+
+        <!-- 主內容 (預設隱藏) -->
+        <main id="main-content" class="hidden">
+            <!-- 店家資訊 -->
+            <header class="mb-6">
+                <p id="liff-status" class="text-xs text-center text-green-600 mb-2 p-2 bg-green-50 rounded-md"></p>
+                <h1 id="store-name" class="text-3xl font-bold text-gray-800 text-center">點餐傳聲筒</h1>
+                <p id="lang-info" class="text-sm text-gray-500 text-center mt-1"></p>
+            </header>
+
+            <!-- 語言顯示 (從 LINE Bot 傳入) -->
+            <section class="bg-white p-4 rounded-lg shadow-md mb-6">
+                <div class="text-center">
+                    <p id="current-language-display" class="text-sm text-gray-600 mb-2">顯示語言：<span id="language-name">中文</span></p>
+                    <p class="text-xs text-gray-400">語言已在 LINE Bot 中設定</p>
+                </div>
+            </section>
+
+            <!-- 店家資訊顯示 -->
+            <section id="store-info" class="bg-white p-4 rounded-lg shadow-md mb-6">
+                <div class="text-center">
+                    <h2 id="current-store-name" class="text-lg font-bold text-gray-700 mb-2">載入中...</h2>
+                    <p id="store-type-badge" class="text-sm text-gray-500">正在準備點餐環境</p>
+                </div>
+            </section>
+
+            <!-- 非合作店家上傳區塊 -->
+            <section id="ocr-section" class="hidden bg-white p-6 rounded-lg shadow-md mb-6">
+                <div class="text-center mb-4">
+                    <div class="inline-flex items-center justify-center w-12 h-12 bg-orange-100 rounded-full mb-3">
+                        <span class="text-2xl">📸</span>
+                    </div>
+                    <h2 id="ocr-title" class="text-lg font-bold text-gray-700 mb-2">非合作店家</h2>
+                    <p id="ocr-description" class="text-sm text-gray-500">請拍攝或上傳清楚的菜單照片，我們將為您即時翻譯並建立點餐單。</p>
+                </div>
+                
+                <!-- 圖片預覽 -->
+                <div id="image-preview-container" class="mb-4 hidden">
+                    <img id="image-preview" src="#" alt="菜單預覽" class="max-h-60 w-auto mx-auto rounded-md shadow-sm"/>
+                </div>
+
+                <!-- 狀態訊息 -->
+                <p id="ocr-status" class="text-center text-blue-600 font-semibold my-4 hidden"></p>
+
+                <!-- 統一的檔案上傳按鈕 -->
+                <div class="text-center">
+                    <button id="custom-upload-btn" class="w-full text-center cursor-pointer bg-indigo-600 text-white font-bold py-4 px-8 rounded-full hover:bg-indigo-700 transition-colors block text-lg">
+                        📸 選擇菜單照片
+                    </button>
+                    <input type="file" id="menu-upload" accept="image/*" style="display: none;">
+                    <p id="support-photo-text" class="text-xs text-gray-500 mt-2">支援拍照或從相簿選擇</p>
+                </div>
+
+                <!-- 上傳按鈕 (選擇照片後顯示) -->
+                <button id="upload-btn" class="w-full mt-3 bg-green-600 text-white font-bold py-3 px-6 rounded-full hover:bg-green-700 transition-colors hidden disabled:bg-gray-400">
+                    開始辨識菜單
+                </button>
+            </section>
+
+            <!-- 菜單列表 -->
+            <section id="menu-list" class="space-y-4">
+                <!-- 菜單項目將由 JavaScript 動態生成於此 -->
+            </section>
+        </main>
+    </div>
+
+    <!-- 底部購物車 / 下單欄 -->
+    <footer id="cart-footer" class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg hidden">
+        <div class="container mx-auto max-w-lg p-4">
+            <div class="flex justify-between items-center">
+                <div>
+                    <span id="total-label" class="text-sm text-gray-600">總計</span>
+                    <p class="text-2xl font-bold text-gray-900">NT$ <span id="total-price">0</span></p>
+                </div>
+                <button id="submit-order" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-full hover:bg-blue-700 transition-colors disabled:bg-gray-300">
+                    送出訂單
+                </button>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 自定義檔案選擇對話框 -->
+    <div id="file-select-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg p-6 mx-4 max-w-sm w-full">
+            <div class="text-center mb-6">
+                <h3 id="modal-title" class="text-lg font-bold text-gray-800 mb-2">選擇照片</h3>
+                <p id="modal-description" class="text-sm text-gray-600">請選擇您要上傳的菜單照片</p>
+            </div>
+            
+            <div class="space-y-3">
+                <button id="gallery-btn" class="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                    <span id="gallery-text">照片圖庫</span>
+                    <span class="text-gray-400">📁</span>
+                </button>
+                
+                <button id="camera-btn" class="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                    <span id="camera-text">拍照</span>
+                    <span class="text-gray-400">📷</span>
+                </button>
+                
+                <button id="file-btn" class="w-full flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                    <span id="file-text">選擇檔案</span>
+                    <span class="text-gray-400">📄</span>
+                </button>
+            </div>
+            
+            <div class="mt-6 text-center">
+                <button id="cancel-modal-btn" class="text-gray-500 hover:text-gray-700 px-4 py-2">
+                    <span id="cancel-text">取消</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 引入 LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+    <script>
+        // --- 環境變數設定 ---
+        // 正式環境後端網址
+        //const API_BASE_URL = 'https://ordering-helper-backend-1095766716155.asia-east1.run.app'; // Cloud Run 後端網址
+        //const LIFF_ID = '2007881521-VavMAlwe'; // 請替換為您的 LIFF ID (例如: 1234567890-abcdefgh)
+        const API_BASE_URL = 'https://gae252-g1-linguaordertalk-prod-876094834622.asia-east1.run.app'; // Cloud Run 後端網址
+        const LIFF_ID = '2007879884-2047DqGL'; // 請替換為您的 LIFF ID (例如: 1234567890-abcdefgh)
+        
+
+        // 取得 LIFF ID 後，請將上面的 'your-liff-id' 替換為您的實際 LIFF ID
+        // 更新時間: 2025-01-27 - 重新啟用 Azure 部署
+
+        // --- 全局變數 ---
+        let cart = {}; // 購物車物件
+        let currentMenuItems = []; // 當前頁面顯示的菜單項目
+        let currentLanguage = 'zh-TW'; // 當前語言
+        let currentStore = null; // 當前選擇的店家
+        let currentStoreName = 'Unknown Store'; // 當前店家名稱
+        let liffInitialized = false; // LIFF 初始化狀態
+        let currentUserId = null; // 當前使用者 ID
+
+        // --- 多語言文字對應表 ---
+        const translations = {
+            'zh-TW': {
+                // 頁面標題
+                pageTitle: '點餐傳聲筒 - 點餐介面',
+                appTitle: '點餐傳聲筒',
+                
+                // 載入狀態
+                loadingText: '正在準備點餐環境...',
+                loadingMenu: '正在載入菜單...',
+                
+                // 語言顯示
+                languageDisplay: '顯示語言：',
+                languageNote: '語言已在 LINE Bot 中設定',
+                
+                // 店家資訊
+                storeLoading: '載入中...',
+                partnerStore: '合作店家',
+                nonPartnerStore: '非合作店家',
+                preparingOrder: '正在準備點餐環境',
+                
+                // OCR 介面
+                partnerStoreNoMenu: '合作店家（無菜單）',
+                partnerStoreNoMenuDesc: '此合作店家目前沒有菜單，請拍攝或上傳菜單照片，我們將為您即時翻譯並建立點餐單。',
+                ocrTitle: '非合作店家',
+                ocrDescription: '請拍攝或上傳清楚的菜單照片，我們將為您即時翻譯並建立點餐單。',
+                menuLoadedClickToExpand: '菜單已載入，點擊展開上傳介面',
+                selectPhoto: '選擇菜單照片',
+                takePhoto: '拍照',
+                selectFromGallery: '從相簿選擇',
+                supportPhotoText: '支援拍照或從相簿選擇',
+                modalTitle: '選擇照片',
+                modalDescription: '請選擇您要上傳的菜單照片',
+                galleryText: '照片圖庫',
+                cameraText: '拍照',
+                fileText: '選擇檔案',
+                cancelText: '取消',
+                startRecognition: '開始辨識菜單',
+                uploadingStatus: '正在上傳並請 AI 辨識菜單...',
+                recognitionSuccess: '辨識完成！正在生成點餐介面...',
+                recognitionError: '辨識失敗，請換張照片或稍後再試。',
+                emptyResult: '辨識結果為空，請換張照片或稍後再試。',
+                renderError: '菜單渲染時發生錯誤，請截圖給工程師',
+                reloadButton: '重新載入',
+                selectPhotoFirst: '請先選擇一張照片！',
+                
+                // 購物車
+                totalLabel: '總計',
+                submitOrder: '送出訂單',
+                emptyCart: '購物車是空的！',
+                
+                // 訂單確認
+                orderConfirmed: '訂單已確認！',
+                orderNumber: '訂單編號',
+                totalAmount: '總金額',
+                orderDetails: '訂單內容',
+                thankYou: '感謝您的訂購，我們會盡快為您準備餐點！',
+                closeWindow: '關閉視窗',
+                orderSuccess: '訂單已成功送出！',
+                orderFailed: '訂單送出失敗：',
+                
+                // 錯誤訊息
+                loadMenuError: '無法載入菜單資料',
+                invalidPrice: '沒有有效價格，請先編輯',
+                noValidItems: '沒有有效的訂單項目！',
+                orderCreateFailed: '訂單建立失敗',
+                validationFailed: '資料驗證失敗：',
+                missingFields: '缺少必要欄位：',
+                systemBusy: '系統忙碌，稍後重試',
+                
+                // LIFF 狀態訊息
+                liffConfigError: '設定錯誤：',
+                liffConfigErrorDesc: '請在程式碼中填入你的 LIFF ID。',
+                helloUser: '你好',
+                liffInitSuccess: 'LIFF 初始化成功 (未登入)',
+                devMode: '開發模式：LIFF 模擬環境',
+                liffInitFailed: 'LIFF 初始化失敗。'
+            },
+            'en-US': {
+                // 頁面標題
+                pageTitle: 'Order Helper - Ordering Interface',
+                appTitle: 'Order Helper',
+                
+                // 載入狀態
+                loadingText: 'Preparing ordering environment...',
+                loadingMenu: 'Loading menu...',
+                
+                // 語言顯示
+                languageDisplay: 'Display Language: ',
+                languageNote: 'Language is set in LINE Bot',
+                
+                // 店家資訊
+                storeLoading: 'Loading...',
+                partnerStore: 'Partner Store',
+                nonPartnerStore: 'Non-Partner Store',
+                preparingOrder: 'Preparing ordering environment',
+                
+                // OCR 介面
+                partnerStoreNoMenu: 'Partner Store (No Menu)',
+                partnerStoreNoMenuDesc: 'This partner store currently has no menu. Please take or upload a clear photo of the menu. We will translate it in real-time and create an order form.',
+                ocrTitle: 'Non-Partner Store',
+                ocrDescription: 'Please take or upload a clear photo of the menu. We will translate it in real-time and create an order form.',
+                menuLoadedClickToExpand: 'Menu loaded, click to expand upload interface',
+                selectPhoto: 'Select Menu Photo',
+                takePhoto: 'Take Photo',
+                selectFromGallery: 'Select from Gallery',
+                supportPhotoText: 'Support taking photos or selecting from albums',
+                modalTitle: 'Select Photo',
+                modalDescription: 'Please select the menu photo you want to upload',
+                galleryText: 'Photo Gallery',
+                cameraText: 'Take Photo',
+                fileText: 'Choose File',
+                cancelText: 'Cancel',
+                startRecognition: 'Start Recognition',
+                uploadingStatus: 'Uploading and asking AI to recognize menu...',
+                recognitionSuccess: 'Recognition complete! Generating ordering interface...',
+                recognitionError: 'Recognition failed, please try a different photo or try again later.',
+                emptyResult: 'Recognition result is empty, please try a different photo or try again later.',
+                renderError: 'Menu rendering error, please screenshot for engineer',
+                reloadButton: 'Reload',
+                selectPhotoFirst: 'Please select a photo first!',
+                
+                // 購物車
+                totalLabel: 'Total',
+                submitOrder: 'Submit Order',
+                emptyCart: 'Cart is empty!',
+                
+                // 訂單確認
+                orderConfirmed: 'Order Confirmed!',
+                orderNumber: 'Order Number',
+                totalAmount: 'Total Amount',
+                orderDetails: 'Order Details',
+                thankYou: 'Thank you for your order, we will prepare your meal as soon as possible!',
+                closeWindow: 'Close Window',
+                orderSuccess: 'Order submitted successfully!',
+                orderFailed: 'Order submission failed: ',
+                
+                // 錯誤訊息
+                loadMenuError: 'Unable to load menu data',
+                invalidPrice: 'No valid price, please edit first',
+                noValidItems: 'No valid order items!',
+                orderCreateFailed: 'Order creation failed',
+                validationFailed: 'Data validation failed: ',
+                missingFields: 'Missing required fields: ',
+                systemBusy: 'System busy, please try again later',
+                
+                // LIFF 狀態訊息
+                liffConfigError: 'Configuration Error: ',
+                liffConfigErrorDesc: 'Please enter your LIFF ID in the code.',
+                helloUser: 'Hello',
+                liffInitSuccess: 'LIFF initialization successful (not logged in)',
+                devMode: 'Development Mode: LIFF Simulation Environment',
+                liffInitFailed: 'LIFF initialization failed.'
+            },
+            'ja-JP': {
+                // 頁面標題
+                pageTitle: '注文ヘルパー - 注文インターフェース',
+                appTitle: '注文ヘルパー',
+                
+                // 載入狀態
+                loadingText: '注文環境を準備中...',
+                loadingMenu: 'メニューを読み込み中...',
+                
+                // 語言顯示
+                languageDisplay: '表示言語：',
+                languageNote: '言語はLINE Botで設定されています',
+                
+                // 店家資訊
+                storeLoading: '読み込み中...',
+                partnerStore: 'パートナー店舗',
+                nonPartnerStore: '非パートナー店舗',
+                preparingOrder: '注文環境を準備中',
+                
+                // OCR 介面
+                partnerStoreNoMenu: 'パートナー店舗（メニューなし）',
+                partnerStoreNoMenuDesc: 'このパートナー店舗には現在メニューがありません。メニューの写真を撮影またはアップロードしてください。リアルタイムで翻訳し、注文フォームを作成いたします。',
+                ocrTitle: '非パートナー店舗',
+                ocrDescription: 'メニューの写真を撮影またはアップロードしてください。リアルタイムで翻訳し、注文フォームを作成いたします。',
+                menuLoadedClickToExpand: 'メニューが読み込まれました。クリックしてアップロードインターフェースを展開',
+                selectPhoto: 'メニュー写真を選択',
+                takePhoto: '写真を撮影',
+                selectFromGallery: 'ギャラリーから選択',
+                supportPhotoText: '写真撮影またはアルバムからの選択をサポート',
+                modalTitle: '写真を選択',
+                modalDescription: 'アップロードするメニュー写真を選択してください',
+                galleryText: '写真ギャラリー',
+                cameraText: '写真を撮影',
+                fileText: 'ファイルを選択',
+                cancelText: 'キャンセル',
+                startRecognition: '認識開始',
+                uploadingStatus: 'アップロード中、AIにメニュー認識を依頼中...',
+                recognitionSuccess: '認識完了！注文インターフェースを生成中...',
+                recognitionError: '認識に失敗しました。別の写真を試すか、後でもう一度お試しください。',
+                emptyResult: '認識結果が空です。別の写真を試すか、後でもう一度お試しください。',
+                renderError: 'メニュー表示エラー、エンジニアにスクリーンショットを送信してください',
+                reloadButton: '再読み込み',
+                selectPhotoFirst: '先に写真を選択してください！',
+                
+                // 購物車
+                totalLabel: '合計',
+                submitOrder: '注文送信',
+                emptyCart: 'カートが空です！',
+                
+                // 訂單確認
+                orderConfirmed: '注文確認済み！',
+                orderNumber: '注文番号',
+                totalAmount: '合計金額',
+                orderDetails: '注文詳細',
+                thankYou: 'ご注文ありがとうございます。できるだけ早くお料理を準備いたします！',
+                closeWindow: 'ウィンドウを閉じる',
+                orderSuccess: '注文が正常に送信されました！',
+                orderFailed: '注文送信に失敗しました：',
+                
+                // 錯誤訊息
+                loadMenuError: 'メニューデータを読み込めません',
+                invalidPrice: '有効な価格がありません。先に編集してください',
+                noValidItems: '有効な注文項目がありません！',
+                orderCreateFailed: '注文作成に失敗しました',
+                validationFailed: 'データ検証に失敗しました：',
+                missingFields: '必須フィールドが不足しています：',
+                systemBusy: 'システムが混雑しています。後でもう一度お試しください',
+                
+                // LIFF 狀態訊息
+                liffConfigError: '設定エラー：',
+                liffConfigErrorDesc: 'コードにLIFF IDを入力してください。',
+                helloUser: 'こんにちは',
+                liffInitSuccess: 'LIFF初期化成功（未ログイン）',
+                devMode: '開発モード：LIFFシミュレーション環境',
+                liffInitFailed: 'LIFF初期化に失敗しました。'
+            },
+            'ko-KR': {
+                // 頁面標題
+                pageTitle: '주문 도우미 - 주문 인터페이스',
+                appTitle: '주문 도우미',
+                
+                // 載入狀態
+                loadingText: '주문 환경을 준비 중...',
+                loadingMenu: '메뉴를 불러오는 중...',
+                
+                // 語言顯示
+                languageDisplay: '표시 언어: ',
+                languageNote: '언어는 LINE Bot에서 설정되었습니다',
+                
+                // 店家資訊
+                storeLoading: '불러오는 중...',
+                partnerStore: '파트너 매장',
+                nonPartnerStore: '비파트너 매장',
+                preparingOrder: '주문 환경을 준비 중',
+                
+                // OCR 介面
+                partnerStoreNoMenu: '파트너 매장 (메뉴 없음)',
+                partnerStoreNoMenuDesc: '이 파트너 매장에는 현재 메뉴가 없습니다. 메뉴 사진을 촬영하거나 업로드해 주세요. 실시간으로 번역하여 주문 양식을 만들어 드리겠습니다.',
+                ocrTitle: '비파트너 매장',
+                ocrDescription: '메뉴 사진을 촬영하거나 업로드해 주세요. 실시간으로 번역하여 주문 양식을 만들어 드리겠습니다.',
+                menuLoadedClickToExpand: '메뉴가 로드되었습니다. 클릭하여 업로드 인터페이스를 펼치세요',
+                selectPhoto: '메뉴 사진 선택',
+                takePhoto: '사진 촬영',
+                selectFromGallery: '갤러리에서 선택',
+                supportPhotoText: '사진 촬영 또는 앨범에서 선택 지원',
+                modalTitle: '사진 선택',
+                modalDescription: '업로드할 메뉴 사진을 선택해 주세요',
+                galleryText: '사진 갤러리',
+                cameraText: '사진 촬영',
+                fileText: '파일 선택',
+                cancelText: '취소',
+                startRecognition: '인식 시작',
+                uploadingStatus: '업로드 중, AI에게 메뉴 인식을 요청 중...',
+                recognitionSuccess: '인식 완료! 주문 인터페이스를 생성 중...',
+                recognitionError: '인식에 실패했습니다. 다른 사진을 시도하거나 나중에 다시 시도해 주세요.',
+                emptyResult: '인식 결과가 비어 있습니다. 다른 사진을 시도하거나 나중에 다시 시도해 주세요.',
+                renderError: '메뉴 렌더링 오류, 엔지니어에게 스크린샷을 보내 주세요',
+                reloadButton: '다시 불러오기',
+                selectPhotoFirst: '먼저 사진을 선택해 주세요!',
+                
+                // 購物車
+                totalLabel: '총계',
+                submitOrder: '주문 제출',
+                emptyCart: '장바구니가 비어 있습니다!',
+                
+                // 訂單確認
+                orderConfirmed: '주문 확인됨!',
+                orderNumber: '주문 번호',
+                totalAmount: '총 금액',
+                orderDetails: '주문 세부사항',
+                thankYou: '주문해 주셔서 감사합니다. 가능한 한 빨리 음식을 준비하겠습니다!',
+                closeWindow: '창 닫기',
+                orderSuccess: '주문이 성공적으로 제출되었습니다!',
+                orderFailed: '주문 제출에 실패했습니다: ',
+                
+                // 錯誤訊息
+                loadMenuError: '메뉴 데이터를 불러올 수 없습니다',
+                invalidPrice: '유효한 가격이 없습니다. 먼저 편집해 주세요',
+                noValidItems: '유효한 주문 항목이 없습니다!',
+                orderCreateFailed: '주문 생성에 실패했습니다',
+                validationFailed: '데이터 검증에 실패했습니다: ',
+                missingFields: '필수 필드가 누락되었습니다: ',
+                systemBusy: '시스템이 혼잡합니다. 나중에 다시 시도해 주세요',
+                
+                // LIFF 狀態訊息
+                liffConfigError: '설정 오류: ',
+                liffConfigErrorDesc: '코드에 LIFF ID를 입력해 주세요.',
+                helloUser: '안녕하세요',
+                liffInitSuccess: 'LIFF 초기화 성공 (로그인되지 않음)',
+                devMode: '개발 모드: LIFF 시뮬레이션 환경',
+                liffInitFailed: 'LIFF 초기화에 실패했습니다.'
+            }
+        };
+
+        // --- 多語言支援配置 ---
+        const SUPPORTED_LANGUAGES = ['zh-TW', 'en-US', 'ja-JP', 'ko-KR']; // 4種種子語言
+
+        /**
+         * 語言協商：決定使用者的目標語言和UI語言
+         * @returns {string} 目標語言碼 (BCP47格式)
+         */
+        function pickUserLang() {
+            const url = new URLSearchParams(location.search);
+            const fromUrl = url.get('preferred_lang') || url.get('lang');
+            const fromLiff = (liffInitialized && typeof liff.getLanguage === 'function') ? liff.getLanguage() : null;
+            const browser = navigator.language;
+
+            // 語言優先級：URL > LIFF > 瀏覽器 > 預設
+            let raw = fromUrl || fromLiff || browser || 'zh-TW';
+            
+            // 處理瀏覽器的 Accept-Language 格式（如 "en-US,en;q=0.9,zh;q=0.8"）
+            if (raw.includes(',')) {
+                raw = raw.split(',')[0].trim();
+            }
+            
+            // 簡單正規化 → BCP47 的常見縮寫補全
+            const map = { 
+                'zh': 'zh-TW', 'zh-CN': 'zh-TW', 'zh-Hans': 'zh-TW', 'zh-Hant': 'zh-TW',
+                'en': 'en-US', 'en-GB': 'en-US', 'en-AU': 'en-US', 'en-CA': 'en-US',
+                'ja': 'ja-JP', 'ja-Hira': 'ja-JP',
+                'ko': 'ko-KR', 'ko-KP': 'ko-KR'
+            };
+            
+            const normalized = map[raw] || raw; // 儘量保留使用者語言，例如 "fr-FR"
+            
+            console.log(`語言協商結果: URL=${fromUrl}, LIFF=${fromLiff}, Browser=${browser}, Raw=${raw}, Final=${normalized}`);
+            return normalized;
+        }
+
+        /**
+         * 確保UI字典存在：如果目標語言不在支援清單中，動態生成翻譯字典
+         * @param {string} targetLang 目標語言碼
+         */
+        async function ensureUiDictionary(targetLang) {
+            if (SUPPORTED_LANGUAGES.includes(targetLang)) return;           // 4種已有
+            if (translations[targetLang]) return;                           // 已經快取過
+
+            try {
+                console.log(`正在為語言 ${targetLang} 生成UI字典...`);
+                
+                // 從 en-US 當模板做批次翻譯（也可改成 zh-TW 當來源）
+                const base = translations['en-US'];
+                const keys = Object.keys(base);
+                const contents = keys.map(k => base[k]);
+
+                const res = await fetch(`${API_BASE_URL}/api/translate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source: 'en',
+                        target: targetLang,                   // e.g. "fr-FR"
+                        contents
+                    })
+                });
+
+                if (!res.ok) {
+                    throw new Error(`翻譯API錯誤: ${res.status}`);
+                }
+
+                const { translated } = await res.json();        // 陣列：對應 contents
+                
+                // 建立新的翻譯字典
+                translations[targetLang] = Object.fromEntries(
+                    keys.map((k, i) => [k, translated[i]])
+                );
+                
+                console.log(`語言 ${targetLang} 的UI字典已生成並快取`);
+                
+                // 更新語言顯示
+                updateLanguageDisplay(targetLang);
+                
+            } catch (error) {
+                console.warn(`無法為語言 ${targetLang} 生成UI字典，將使用英文作為fallback:`, error);
+                // 如果翻譯失敗，使用英文作為fallback
+                translations[targetLang] = translations['en-US'];
+                updateLanguageDisplay('en-US');
+            }
+        }
+
+        /**
+         * 語言碼轉換：將完整語言碼轉換為後端期望的格式
+         * @param {string} language 完整語言碼 (如 "fr-FR")
+         * @returns {string} 後端語言碼 (如 "fr")
+         */
+        function getBackendLanguage(language) {
+            // 如果是支援的語言，使用現有的對應
+            const backendLanguageMapping = {
+                'en-US': 'en',
+                'zh-TW': 'zh',
+                'ja-JP': 'ja',
+                'ko-KR': 'ko'
+            };
+            
+            if (backendLanguageMapping[language]) {
+                return backendLanguageMapping[language];
+            }
+            
+            // 對於其他語言，取主要語言碼 (如 "fr-FR" -> "fr")
+            return language.split('-')[0];
+        }
+
+        /**
+         * 更新語言顯示：顯示當前使用的語言名稱
+         * @param {string} languageCode 語言碼
+         */
+        function updateLanguageDisplay(languageCode) {
+            const languageNames = {
+                'zh-TW': '繁體中文',
+                'en-US': 'English',
+                'ja-JP': '日本語',
+                'ko-KR': '한국어',
+                'fr-FR': 'Français',
+                'fr-CA': 'Français (Canada)',
+                'de-DE': 'Deutsch',
+                'de-AT': 'Deutsch (Österreich)',
+                'de-CH': 'Deutsch (Schweiz)',
+                'es-ES': 'Español',
+                'es-MX': 'Español (México)',
+                'es-AR': 'Español (Argentina)',
+                'it-IT': 'Italiano',
+                'pt-PT': 'Português',
+                'pt-BR': 'Português (Brasil)',
+                'ru-RU': 'Русский',
+                'ar-SA': 'العربية',
+                'ar-EG': 'العربية (مصر)',
+                'hi-IN': 'हिन्दी',
+                'th-TH': 'ไทย',
+                'vi-VN': 'Tiếng Việt',
+                'id-ID': 'Bahasa Indonesia',
+                'ms-MY': 'Bahasa Melayu',
+                'tr-TR': 'Türkçe',
+                'pl-PL': 'Polski',
+                'cs-CZ': 'Čeština',
+                'sk-SK': 'Slovenčina',
+                'hu-HU': 'Magyar',
+                'ro-RO': 'Română',
+                'bg-BG': 'Български',
+                'hr-HR': 'Hrvatski',
+                'sr-RS': 'Српски',
+                'sl-SI': 'Slovenščina',
+                'et-EE': 'Eesti',
+                'lv-LV': 'Latviešu',
+                'lt-LT': 'Lietuvių',
+                'fi-FI': 'Suomi',
+                'sv-SE': 'Svenska',
+                'da-DK': 'Dansk',
+                'no-NO': 'Norsk',
+                'is-IS': 'Íslenska',
+                'nl-NL': 'Nederlands',
+                'nl-BE': 'Nederlands (België)',
+                'el-GR': 'Ελληνικά',
+                'he-IL': 'עברית',
+                'fa-IR': 'فارسی',
+                'ur-PK': 'اردو',
+                'bn-BD': 'বাংলা',
+                'ta-IN': 'தமிழ்',
+                'te-IN': 'తెలుగు',
+                'kn-IN': 'ಕನ್ನಡ',
+                'ml-IN': 'മലയാളം',
+                'gu-IN': 'ગુજરાતી',
+                'pa-IN': 'ਪੰਜਾਬੀ',
+                'or-IN': 'ଓଡ଼ିଆ',
+                'as-IN': 'অসমীয়া',
+                'ne-NP': 'नेपाली',
+                'si-LK': 'සිංහල',
+                'my-MM': 'မြန်မာ',
+                'km-KH': 'ខ្មែរ',
+                'lo-LA': 'ລາວ',
+                'ka-GE': 'ქართული',
+                'hy-AM': 'Հայերեն',
+                'az-AZ': 'Azərbaycan',
+                'kk-KZ': 'Қазақ',
+                'ky-KG': 'Кыргызча',
+                'lb-LU': 'Lëtzebuergesch',
+                'mt-MT': 'Malti',
+                'cy-GB': 'Cymraeg',
+                'ga-IE': 'Gaeilge',
+                'gd-GB': 'Gàidhlig',
+                'kw-GB': 'Kernewek',
+                'br-FR': 'Brezhoneg',
+                'oc-FR': 'Occitan',
+                'ca-ES': 'Català',
+                'eu-ES': 'Euskara',
+                'gl-ES': 'Galego',
+                'ast-ES': 'Asturianu',
+                'an-ES': 'Aragonés',
+                'rm-CH': 'Rumantsch',
+                'fur-IT': 'Furlan',
+                'lld-IT': 'Ladin',
+                'vec-IT': 'Vèneto',
+                'sc-IT': 'Sardu',
+                'co-FR': 'Corsu',
+                'wa-BE': 'Walon',
+                'li-NL': 'Limburgs',
+                'fy-NL': 'Frysk',
+                'st-ZA': 'Sesotho',
+                'zu-ZA': 'isiZulu',
+                'xh-ZA': 'isiXhosa',
+                'af-ZA': 'Afrikaans',
+                'sw-KE': 'Kiswahili',
+                'am-ET': 'አማርኛ',
+                'om-ET': 'Afaan Oromoo',
+                'so-SO': 'Soomaali',
+                'ti-ER': 'ትግርኛ',
+                'ha-NG': 'Hausa',
+                'yo-NG': 'Yorùbá',
+                'ig-NG': 'Igbo',
+                'zu-ZA': 'isiZulu',
+                'xh-ZA': 'isiXhosa',
+                'af-ZA': 'Afrikaans',
+                'sw-KE': 'Kiswahili',
+                'am-ET': 'አማርኛ',
+                'om-ET': 'Afaan Oromoo',
+                'so-SO': 'Soomaali',
+                'ti-ER': 'ትግርኛ',
+                'ha-NG': 'Hausa',
+                'yo-NG': 'Yorùbá',
+                'ig-NG': 'Igbo'
+            };
+            
+            const languageName = languageNames[languageCode] || languageCode;
+            const languageElement = document.getElementById('language-name');
+            if (languageElement) {
+                languageElement.textContent = languageName;
+            }
+            
+            // 更新頁面標題
+            const texts = translations[languageCode] || translations['en-US'];
+            if (texts && texts.pageTitle) {
+                document.title = texts.pageTitle;
+            }
+        }
+
+        // --- 語言切換函數 ---
+        function updateInterfaceLanguage() {
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            // 更新頁面標題
+            document.title = texts.pageTitle;
+            
+            // 更新應用標題
+            document.getElementById('store-name').textContent = texts.appTitle;
+            
+            // 更新載入文字
+            document.querySelector('#loading p').textContent = texts.loadingText;
+            
+            // 更新語言顯示
+            const langNames = {
+                'zh-TW': '中文',
+                'en-US': 'English',
+                'ja-JP': '日本語',
+                'ko-KR': '한국어'
+            };
+            const languageName = langNames[currentLanguage] || '中文';
+            document.getElementById('current-language-display').innerHTML = 
+                `${texts.languageDisplay}<span id="language-name">${languageName}</span>`;
+            document.querySelector('#current-language-display + p').textContent = texts.languageNote;
+            
+            // 更新店家資訊
+            if (document.getElementById('current-store-name').textContent === 'Loading...' || 
+                document.getElementById('current-store-name').textContent === '載入中...') {
+                document.getElementById('current-store-name').textContent = texts.storeLoading;
+            }
+            
+            // 更新店家類型標籤
+            if (document.getElementById('store-type-badge').textContent === 'Preparing ordering environment' ||
+                document.getElementById('store-type-badge').textContent === '正在準備點餐環境') {
+                document.getElementById('store-type-badge').textContent = texts.preparingOrder;
+            }
+            
+            // 更新 OCR 介面（根據模式決定是否覆蓋）
+            const ocrSection = document.getElementById('ocr-section');
+            if (ocrSection && ocrSection.dataset.mode !== 'partner-no-menu') {
+                // 只有在非合作店家無菜單模式時才覆蓋標題和描述
+                document.getElementById('ocr-title').textContent = texts.ocrTitle;
+                document.getElementById('ocr-description').textContent = texts.ocrDescription;
+            }
+            // 更新統一的上傳按鈕文字
+            const customUploadBtn = document.getElementById('custom-upload-btn');
+            if (customUploadBtn) {
+                customUploadBtn.textContent = '📸 ' + texts.selectPhoto;
+            }
+            document.getElementById('upload-btn').textContent = texts.startRecognition;
+            // 更新支援拍照文字
+            const supportPhotoElement = document.getElementById('support-photo-text');
+            if (supportPhotoElement) {
+                supportPhotoElement.textContent = texts.supportPhotoText;
+            }
+            
+            // 更新自定義對話框文字
+            const modalTitle = document.getElementById('modal-title');
+            const modalDescription = document.getElementById('modal-description');
+            const galleryText = document.getElementById('gallery-text');
+            const cameraText = document.getElementById('camera-text');
+            const fileText = document.getElementById('file-text');
+            const cancelText = document.getElementById('cancel-text');
+            
+            if (modalTitle) modalTitle.textContent = texts.modalTitle;
+            if (modalDescription) modalDescription.textContent = texts.modalDescription;
+            if (galleryText) galleryText.textContent = texts.galleryText;
+            if (cameraText) cameraText.textContent = texts.cameraText;
+            if (fileText) fileText.textContent = texts.fileText;
+            if (cancelText) cancelText.textContent = texts.cancelText;
+            
+            // 更新購物車
+            document.getElementById('total-label').textContent = texts.totalLabel;
+            document.getElementById('submit-order').textContent = texts.submitOrder;
+            
+            // 更新問候語（如果用戶已登入）
+            const liffStatus = document.getElementById('liff-status');
+            if (liffStatus && liffStatus.textContent.includes('你好') || liffStatus.textContent.includes('Hello') || liffStatus.textContent.includes('こんにちは') || liffStatus.textContent.includes('안녕하세요')) {
+                // 提取用戶名稱
+                const match = liffStatus.textContent.match(/(你好|Hello|こんにちは|안녕하세요)\s+(.+?)！/);
+                if (match && match[2]) {
+                    const userName = match[2];
+                    liffStatus.textContent = `${texts.helloUser} ${userName}！`;
+                }
+            }
+        }
+
+
+        // --- 主要執行函數 ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // 等待 LIFF SDK 載入完成
+                await waitForLiff();
+                await initializeLiff();
+                
+                // 語言協商：決定使用者的目標語言
+                const targetLang = pickUserLang();
+                console.log('使用者目標語言:', targetLang);
+                
+                // 確保UI字典存在（如果是新語言，會動態生成）
+                await ensureUiDictionary(targetLang);
+                
+                // 設定當前語言為目標語言
+                currentLanguage = targetLang;
+                
+                // 更新語言顯示
+                updateLanguageDisplay(currentLanguage);
+                
+                // 初始化其他參數
+                await initializeParameters();
+                
+                // 隱藏讀取畫面，顯示主內容
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+                
+                console.log('應用程式初始化完成，使用語言:', currentLanguage);
+            } catch (error) {
+                console.error('應用程式初始化失敗:', error);
+                // 如果初始化失敗，至少顯示錯誤訊息
+                document.getElementById('loading').innerHTML = `
+                    <div class="text-center py-20">
+                        <p class="text-red-600 mb-4">初始化失敗</p>
+                        <button onclick="location.reload()" class="bg-blue-600 text-white px-4 py-2 rounded-lg">
+                            重新載入
+                        </button>
+                    </div>
+                `;
+            }
+        });
+
+        // 等待 LIFF SDK 載入
+        async function waitForLiff() {
+            return new Promise((resolve) => {
+                const checkLiff = () => {
+                    if (typeof liff !== 'undefined') {
+                        resolve();
+                    } else {
+                        setTimeout(checkLiff, 100);
+                    }
+                };
+                checkLiff();
+            });
+        }
+
+        // --- 功能函數 ---
+
+        async function initializeLiff() {
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            if (LIFF_ID === 'your-liff-id') {
+                const statusElement = document.getElementById('liff-status');
+                statusElement.innerHTML = `<span class="text-red-600 font-bold">${texts.liffConfigError}</span><span class="text-gray-700">${texts.liffConfigErrorDesc}</span>`;
+                statusElement.classList.add('bg-red-50', 'text-red-600');
+                return;
+            }
+            try {
+                // 檢查是否在 LINE 環境中
+                const isInClient = liff.isInClient();
+                
+                await liff.init({ 
+                    liffId: LIFF_ID,
+                    withLoginOnExternalBrowser: isInClient // 只在 LINE 環境中要求登入
+                });
+                console.log('LIFF init success');
+                
+                if (liff.isLoggedIn()) {
+                    const profile = await liff.getProfile();
+                    currentUserId = profile.userId; // 儲存 LINE 使用者 ID
+                    // 注意：這裡的 currentLanguage 可能還沒有正確設定，所以使用預設值
+                    const texts = translations['zh-TW'];
+                    document.getElementById('liff-status').textContent = `${texts.helloUser} ${profile.displayName}！`;
+                    console.log('用戶資料:', profile);
+                } else {
+                    // 非 LIFF 環境或未登入時，使用訪客 ID
+                    currentUserId = `guest_${crypto.randomUUID().slice(0, 8)}`;
+                    document.getElementById('liff-status').textContent = isInClient 
+                        ? texts.liffInitSuccess 
+                        : texts.devMode;
+                }
+                liffInitialized = true;
+            } catch (error) {
+                console.error("LIFF Initialization failed", error);
+                // 開發環境：顯示模擬訊息
+                if (window.location.hostname === 'localhost' || window.location.hostname.includes('azurewebsites.net')) {
+                    document.getElementById('liff-status').textContent = texts.devMode;
+                } else {
+                    document.getElementById('liff-status').textContent = texts.liffInitFailed;
+                }
+                // 初始化失敗時也設定訪客 ID
+                currentUserId = `guest_${crypto.randomUUID().slice(0, 8)}`;
+            }
+        }
+
+
+
+                async function initializeParameters() {
+            // 從 URL 參數取得所有必要資訊
+            const urlParams = new URLSearchParams(window.location.search);
+            const storeId = urlParams.get('store_id');
+            const placeId = urlParams.get('place_id');
+            const storeName = urlParams.get('store_name') || 'Unknown Store';
+            
+            // 檢查是否有 store_id 或 place_id
+            const hasStoreIdentifier = storeId || placeId;
+            
+            // 設定全局變數（語言已在啟動流程中設定）
+            currentStore = storeId || placeId || 'non-partner';
+            currentStoreName = storeName; // 設定全域店家名稱
+            
+            // 除錯：顯示初始化過程
+            console.log('參數初始化過程:', {
+                store_id: storeId,
+                place_id: placeId,
+                current_language: currentLanguage,
+                liff_initialized: liffInitialized,
+                hasStoreIdentifier: hasStoreIdentifier,
+                storeName: storeName,
+                currentStore: currentStore
+            });
+            
+            // 如果有店家識別碼，向後端查詢合作狀態
+            if (hasStoreIdentifier) {
+                await checkStorePartnerStatus(storeId || placeId, storeName, currentLanguage);
+            } else {
+                // 沒有店家識別碼，顯示非合作店家介面
+                showNonPartnerInterface('', false); // 傳入 false 表示非合作店家
+            }
+            
+            // 更新語言顯示
+            updateLanguageDisplay();
+            updateLanguageInfo();
+            
+            // 更新介面語言
+            updateInterfaceLanguage();
+        }
+
+        async function checkStorePartnerStatus(storeIdentifier, storeName, currentLang) {
+            try {
+                console.log('開始檢查店家合作狀態:', storeIdentifier);
+                
+                // 判斷是 store_id 還是 place_id
+                const isStoreId = !isNaN(storeIdentifier);
+                const queryParam = isStoreId ? 'store_id' : 'place_id';
+                
+                // 向後端發送請求檢查店家合作狀態
+                const response = await fetch(`${API_BASE_URL}/api/stores/check-partner-status?${queryParam}=${storeIdentifier}`);
+                
+                if (!response.ok) {
+                    console.log('店家合作狀態檢查失敗，顯示非合作店家介面');
+                    showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log('店家合作狀態檢查結果:', data);
+                
+                // 更新店家資訊顯示
+                const displayStoreName = data.store_name || storeName;
+                document.getElementById('current-store-name').textContent = displayStoreName;
+                currentStoreName = displayStoreName; // 更新全域店家名稱
+                
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                
+                if (data.is_partner) {
+                    // 合作店家
+                    document.getElementById('store-type-badge').innerHTML = 
+                        `<span class="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">${texts.partnerStore}</span>`;
+                    
+                    if (data.has_menu) {
+                        // 有菜單，載入菜單
+                        await loadPartnerStoreMenu(data.store_id, currentLanguage);
+                    } else {
+                        // 沒有菜單，顯示相機選項介面
+                        console.log('合作店家但沒有菜單，顯示相機選項');
+                        showNonPartnerInterface(storeName, true); // 傳入 true 表示是合作店家
+                    }
+                } else {
+                    // 非合作店家
+                    document.getElementById('store-type-badge').innerHTML = 
+                        `<span class="bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs">${texts.nonPartnerStore}</span>`;
+                    
+                    // 非合作店家也要檢查是否有菜單
+                    if (data.has_menu) {
+                        // 有菜單，載入菜單
+                        await loadPartnerStoreMenu(data.store_id || storeIdentifier, currentLanguage);
+                    } else {
+                        // 非合作店家介面（相機選項）
+                        console.log('非合作店家且沒有菜單，顯示相機選項');
+                        showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
+                    }
+                }
+                
+            } catch (error) {
+                console.error('檢查店家合作狀態時發生錯誤:', error);
+                // 發生錯誤時，顯示非合作店家介面
+                showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
+            }
+        }
+
+        function updateLanguageDisplay() {
+            const langNames = {
+                'zh-TW': '中文',
+                'en-US': 'English',
+                'ja-JP': '日本語',
+                'ko-KR': '한국어'
+            };
+            
+            const languageName = langNames[currentLanguage] || '中文';
+            document.getElementById('language-name').textContent = languageName;
+            
+            // 更新語言資訊
+            updateLanguageInfo();
+        }
+
+        function updateLanguageInfo() {
+            const langNames = {
+                'zh-TW': '中文',
+                'en-US': 'English',
+                'ja-JP': '日本語',
+                'ko-KR': '한국어'
+            };
+            const languageName = langNames[currentLanguage] || '中文';
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            document.getElementById('lang-info').textContent = 
+                `Store ID: ${currentStore || 'Not Selected'} / Language: ${languageName}`;
+        }
+
+
+
+        async function loadPartnerStoreMenu(storeIdentifier, language) {
+            try {
+                // 隱藏 OCR 介面
+                document.getElementById('ocr-section').classList.add('hidden');
+                
+                // 顯示載入狀態
+                const menuList = document.getElementById('menu-list');
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                menuList.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                        <p class="text-gray-600">${texts.loadingMenu}</p>
+                    </div>
+                `;
+                
+                // 直接傳遞完整語言碼給後端（支援任意 BCP47 語言）
+                const apiLanguage = currentLanguage; // 不再轉換，直接傳遞
+                
+                // 判斷是 store_id 還是 place_id，選擇正確的 API 端點
+                const isStoreId = !isNaN(storeIdentifier);
+                const apiEndpoint = isStoreId 
+                    ? `${API_BASE_URL}/api/menu/${storeIdentifier}?lang=${apiLanguage}`
+                    : `${API_BASE_URL}/api/menu/by-place-id/${storeIdentifier}?lang=${apiLanguage}`;
+                
+                console.log('使用 API 端點:', apiEndpoint, '語言:', apiLanguage);
+                
+                // 向後端請求菜單資料
+                const response = await fetch(apiEndpoint);
+                if (!response.ok) {
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    throw new Error(texts.loadMenuError);
+                }
+                const data = await response.json();
+                
+                // 渲染菜單
+                if (data && data.menu_items && data.menu_items.length > 0) {
+                    try {
+                        renderMenu(data.menu_items);
+                    } catch (renderError) {
+                        console.error('前端渲染錯誤:', renderError);
+                        const texts = translations[currentLanguage] || translations['zh-TW'];
+                        menuList.innerHTML = `
+                            <div class="text-center py-8">
+                                <p class="text-red-600 mb-4">${texts.renderError}</p>
+                                <button onclick="location.reload()" class="bg-blue-600 text-white px-4 py-2 rounded-lg">
+                                    ${texts.reloadButton}
+                                </button>
+                            </div>
+                        `;
+                    }
+                } else {
+                    // 如果沒有菜單資料，顯示錯誤訊息
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    menuList.innerHTML = `
+                        <div class="text-center py-8">
+                            <p class="text-red-600 mb-4">${texts.loadMenuError}</p>
+                            <button onclick="location.reload()" class="bg-blue-600 text-white px-4 py-2 rounded-lg">
+                                ${texts.reloadButton}
+                            </button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('載入合作店家菜單失敗:', error);
+                // 顯示錯誤訊息
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                menuList.innerHTML = `
+                    <div class="text-center py-8">
+                        <p class="text-red-600 mb-4">${texts.loadMenuError}</p>
+                        <button onclick="location.reload()" class="bg-blue-600 text-white px-4 py-2 rounded-lg">
+                            ${texts.reloadButton}
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        function showNonPartnerInterface(storeName = '', isPartnerStore = false) {
+            // 顯示非合作店家介面
+            const ocrSection = document.getElementById('ocr-section');
+            ocrSection.classList.remove('hidden');
+            
+            // 設定模式旗標，避免被 updateInterfaceLanguage 覆蓋
+            ocrSection.dataset.mode = isPartnerStore ? 'partner-no-menu' : 'non-partner';
+            
+            // 如果有店家名稱，更新顯示和全域變數
+            if (storeName) {
+                document.getElementById('current-store-name').textContent = storeName;
+                currentStoreName = storeName; // 更新全域店家名稱
+            }
+            
+            // 根據店家狀態更新標題和描述
+            const ocrTitle = document.getElementById('ocr-title');
+            const ocrDescription = document.getElementById('ocr-description');
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            if (isPartnerStore) {
+                // 合作店家但沒有菜單
+                ocrTitle.textContent = texts.partnerStoreNoMenu || '合作店家（無菜單）';
+                ocrDescription.textContent = texts.partnerStoreNoMenuDesc || '此合作店家目前沒有菜單，請拍攝或上傳菜單照片，我們將為您即時翻譯並建立點餐單。';
+            } else {
+                // 非合作店家
+                ocrTitle.textContent = texts.ocrTitle;
+                ocrDescription.textContent = texts.ocrDescription;
+            }
+            
+            // 初始化非合作店家模式
+            setupNonPartnerMode();
+        }
+
+        function setupNonPartnerMode() {
+            const fileInput = document.getElementById('menu-upload');
+            const uploadBtn = document.getElementById('upload-btn');
+            const previewContainer = document.getElementById('image-preview-container');
+            const previewImage = document.getElementById('image-preview');
+
+            // 處理檔案選擇的通用函數
+            function handleFileSelect(file) {
+                if (file) {
+                    previewImage.src = URL.createObjectURL(file);
+                    previewContainer.classList.remove('hidden');
+                    uploadBtn.classList.remove('hidden');
+                    
+                    // 儲存選擇的檔案到全域變數
+                    window.selectedFile = file;
+                }
+            }
+
+            // 自定義檔案選擇對話框邏輯
+            const customUploadBtn = document.getElementById('custom-upload-btn');
+            const fileSelectModal = document.getElementById('file-select-modal');
+            const galleryBtn = document.getElementById('gallery-btn');
+            const cameraBtn = document.getElementById('camera-btn');
+            const fileBtn = document.getElementById('file-btn');
+            const cancelModalBtn = document.getElementById('cancel-modal-btn');
+            
+            // 顯示自定義對話框
+            customUploadBtn.addEventListener('click', () => {
+                fileSelectModal.classList.remove('hidden');
+            });
+            
+            // 關閉對話框
+            cancelModalBtn.addEventListener('click', () => {
+                fileSelectModal.classList.add('hidden');
+            });
+            
+            // 點擊背景關閉對話框
+            fileSelectModal.addEventListener('click', (e) => {
+                if (e.target === fileSelectModal) {
+                    fileSelectModal.classList.add('hidden');
+                }
+            });
+            
+            // 從相簿選擇
+            galleryBtn.addEventListener('click', () => {
+                fileInput.accept = 'image/*';
+                fileInput.click();
+                fileSelectModal.classList.add('hidden');
+            });
+            
+            // 拍照
+            cameraBtn.addEventListener('click', () => {
+                fileInput.accept = 'image/*';
+                fileInput.capture = 'environment';
+                fileInput.click();
+                fileSelectModal.classList.add('hidden');
+            });
+            
+            // 選擇檔案
+            fileBtn.addEventListener('click', () => {
+                fileInput.accept = 'image/*';
+                fileInput.capture = null;
+                fileInput.click();
+                fileSelectModal.classList.add('hidden');
+            });
+            
+            // 為檔案上傳 input 添加事件監聽器
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                handleFileSelect(file);
+            });
+
+            uploadBtn.addEventListener('click', async () => {
+                const file = window.selectedFile;
+                if (!file) {
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    alert(texts.selectPhotoFirst);
+                    return;
+                }
+                
+                // 壓縮圖片
+                const compressedFile = await compress(file);
+                await handleOcrUpload(compressedFile, currentLanguage);
+            });
+        }
+
+        // 圖片壓縮函數 (優化版)
+        function compress(imgFile) {
+            return new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const scale = 1024 / Math.max(img.width, img.height);
+                    canvas.width = img.width * scale;
+                    canvas.height = img.height * scale;
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(b => {
+                        const compressedFile = new File([b], imgFile.name, {type:'image/jpeg'});
+                        console.log('圖片壓縮完成:', {
+                            原始大小: imgFile.size,
+                            壓縮後大小: compressedFile.size,
+                            壓縮比例: Math.round((1 - compressedFile.size / imgFile.size) * 100) + '%',
+                            新尺寸: `${canvas.width}×${canvas.height}`
+                        });
+                        resolve(compressedFile);
+                    }, 'image/jpeg', 0.85);
+                };
+                img.src = URL.createObjectURL(imgFile);
+            });
+        }
+
+        async function handleOcrUpload(file, language) {
+            const ocrStatus = document.getElementById('ocr-status');
+            const uploadBtn = document.getElementById('upload-btn');
+            
+            // 顯示處理狀態
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            ocrStatus.innerHTML = `
+                <div class="flex items-center justify-center space-x-2">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span>${texts.uploadingStatus}</span>
+                </div>
+            `;
+            ocrStatus.classList.remove('hidden');
+            uploadBtn.disabled = true;
+
+            try {
+                // 檢查並確保 store_id 有有效值
+                const storeId = currentStore || 'non-partner';
+                console.log('即將上傳 store_id:', storeId);
+                
+                // 使用新的語言處理函數
+                const backendLanguage = getBackendLanguage(currentLanguage);
+                
+                const formData = new FormData();
+                formData.append('file', file);  // upload-menu-image 端點期望的參數名稱是 'file'
+                formData.append('lang', backendLanguage);
+                formData.append('store_id', storeId);
+                // 不發送 user_id，讓後端自動創建臨時用戶
+                
+                // debug: dump every key/val
+                console.log('FormData 內容:');
+                for (let [k,v] of formData.entries()) {
+                    console.log(`→ ${k}:`, v);
+                }
+                
+                console.log('準備上傳檔案:', {
+                    fileName: file.name,
+                    fileSize: file.size,
+                    fileType: file.type,
+                    language: language,
+                    storeId: storeId
+                });
+                
+                // 使用 upload-menu-image 端點來處理OCR菜單
+                const response = await fetch(`${API_BASE_URL}/api/upload-menu-image`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('API 回應狀態:', response.status, response.statusText);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('API 錯誤回應:', errorData);
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    throw new Error(errorData.error || `${texts.systemBusy} (${response.status})`);
+                }
+                
+                // 201 Created 也是成功狀態
+                console.log('API 呼叫成功:', response.status);
+                
+                const data = await response.json();
+                console.log('後端回傳的完整資料:', data);
+                
+                // 檢查資料結構
+                if (data.menu_items) {
+                    console.log('menu_items 存在:', data.menu_items);
+                    console.log('items 數量:', data.menu_items.length);
+                } else {
+                    console.log('menu_items 不存在，檢查其他可能的欄位');
+                    console.log('可用的欄位:', Object.keys(data));
+                }
+                
+                // 顯示成功狀態
+                ocrStatus.innerHTML = `
+                    <div class="flex items-center justify-center space-x-2 text-green-600">
+                        <span class="text-xl">✅</span>
+                        <span>${texts.recognitionSuccess}</span>
+                    </div>
+                `;
+                setTimeout(() => ocrStatus.classList.add('hidden'), 2000);
+                
+                // 檢查是否有OCR菜單ID
+                if (data.ocr_menu_id) {
+                    console.log('OCR菜單ID:', data.ocr_menu_id);
+                    // 保存OCR菜單ID供後續使用
+                    window.currentOcrMenuId = data.ocr_menu_id;
+                }
+                
+                // 渲染辨識結果
+                if (data.menu_items && data.menu_items.length > 0) {
+                    try {
+                        // 確保菜單項目有正確的OCR ID格式
+                        const menuItemsWithOcrIds = data.menu_items.map((item, index) => ({
+                            ...item,
+                            id: data.ocr_menu_id ? `ocr_${data.ocr_menu_id}_${index}` : item.id,
+                            menu_item_id: data.ocr_menu_id ? `ocr_${data.ocr_menu_id}_${index}` : item.menu_item_id
+                        }));
+                        
+                        console.log('處理後的菜單項目:', menuItemsWithOcrIds);
+                        renderMenu(menuItemsWithOcrIds);
+                        // 渲染成功，隱藏狀態訊息
+                        setTimeout(() => ocrStatus.classList.add('hidden'), 2000);
+                    } catch (renderError) {
+                        console.error('前端渲染錯誤:', renderError);
+                        ocrStatus.innerHTML = `
+                            <div class="flex items-center justify-center space-x-2 text-red-600">
+                                <span class="text-xl">⚠️</span>
+                                <span>${texts.renderError}</span>
+                            </div>
+                        `;
+                    }
+                } else {
+                    // 顯示錯誤訊息
+                    ocrStatus.innerHTML = `
+                        <div class="flex items-center justify-center space-x-2 text-red-600">
+                            <span class="text-xl">❌</span>
+                            <span>${texts.emptyResult}</span>
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                console.error("OCR 處理失敗:", error);
+                ocrStatus.innerHTML = `
+                    <div class="flex items-center justify-center space-x-2 text-red-600">
+                        <span class="text-xl">❌</span>
+                        <span>${texts.recognitionError}</span>
+                    </div>
+                `;
+            } finally {
+                uploadBtn.disabled = false;
+            }
+        }
+
+        function renderMenu(items) {
+            currentMenuItems = items;
+            const menuList = document.getElementById('menu-list');
+            const ocrSection = document.getElementById('ocr-section');
+            
+            // 清空菜單列表
+            menuList.innerHTML = '';
+            
+            // 渲染菜單項目
+            items.forEach(item => {
+                const element = createMenuItemElement(item);
+                if (element) {
+                    menuList.appendChild(element);
+                }
+            });
+            
+            // 菜單辨識完成後，隱藏或縮小上傳介面
+            if (ocrSection && !ocrSection.classList.contains('hidden')) {
+                // 將上傳介面縮小並移到側邊，讓菜單成為主要顯示內容
+                ocrSection.classList.add('collapsed');
+                ocrSection.style.maxHeight = '120px';
+                ocrSection.style.overflow = 'hidden';
+                ocrSection.style.transition = 'all 0.3s ease';
+                
+                // 添加收合按鈕
+                const collapseButton = document.createElement('button');
+                collapseButton.className = 'w-full text-center text-white text-sm py-3 px-4 rounded-lg transition-all collapse-button';
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                collapseButton.innerHTML = `📋 ${texts.menuLoadedClickToExpand || '菜單已載入，點擊展開上傳介面'}`;
+                collapseButton.onclick = () => toggleOcrSection();
+                
+                // 在菜單列表前插入收合按鈕
+                const menuListContainer = menuList.parentElement;
+                const collapseButtonContainer = document.createElement('div');
+                collapseButtonContainer.className = 'mb-4';
+                collapseButtonContainer.appendChild(collapseButton);
+                menuListContainer.insertBefore(collapseButtonContainer, menuList);
+                
+                // 滾動到菜單頂部，確保使用者能看到菜單
+                setTimeout(() => {
+                    menuList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 300);
+            }
+            
+            // 顯示購物車
+            document.getElementById('cart-footer').classList.remove('hidden');
+        }
+
+        // 新增：切換上傳介面的展開/收合狀態
+        function toggleOcrSection() {
+            const ocrSection = document.getElementById('ocr-section');
+            const isCollapsed = ocrSection.classList.contains('collapsed');
+            
+            if (isCollapsed) {
+                // 展開上傳介面
+                ocrSection.classList.remove('collapsed');
+                ocrSection.style.maxHeight = 'none';
+                ocrSection.style.overflow = 'visible';
+            } else {
+                // 收合上傳介面
+                ocrSection.classList.add('collapsed');
+                ocrSection.style.maxHeight = '120px';
+                ocrSection.style.overflow = 'hidden';
+            }
+        }
+
+        function createMenuItemElement(item) {
+            // 安全處理可能為空的欄位
+            const safeStr = (value) => (value ?? '').toString();
+            const safeNum = (value) => {
+                if (value === null || value === undefined) return 0;
+                const num = Number(value);
+                return isNaN(num) ? 0 : num;
+            };
+            
+            // 支援多種可能的欄位名稱（包括新的雙語格式）
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            // 支援新的雙語格式 {name: {original: "中文", translated: "English"}}
+            let itemName;
+            if (item.name && typeof item.name === 'object' && item.name.original && item.name.translated) {
+                // 新格式：根據使用者語言選擇菜名
+                if (currentLanguage.startsWith('zh')) {
+                    itemName = item.name.original; // 中文使用者使用中文菜名
+                } else {
+                    itemName = item.name.translated; // 其他語言使用者使用翻譯菜名
+                }
+            } else {
+                // 舊格式：優先使用 translated_name，然後是 original_name
+                itemName = safeStr(item.translated_name || item.original_name || item.item_name || 'Untitled');
+            }
+            const description = safeStr(item.description || '');
+            const price = safeNum(item.price || item.price_small || 0);
+            const itemId = item.id || item.menu_item_id || item.temp_id || `temp_${Date.now()}_${Math.random()}`;
+            
+            // 驗證必要欄位 - 只要有名稱和價格就顯示
+            if (!itemName || itemName === 'Untitled' || itemName === '未命名') {
+                console.warn('菜單項目缺少名稱，略過此項:', item);
+                return null;
+            }
+            
+            const div = document.createElement('div');
+            div.className = 'bg-white p-4 rounded-lg shadow-md flex items-center space-x-4';
+            div.innerHTML = `
+                <div class="flex-grow">
+                    <h3 class="font-bold text-lg text-gray-800">${itemName}</h3>
+                    <p class="text-sm text-gray-500">${description}</p>
+                    <p class="text-md font-semibold text-blue-600 mt-1">NT$ ${price}</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button data-item-id="${itemId}" class="decrease-btn bg-gray-200 text-gray-700 w-8 h-8 rounded-full font-bold text-lg hover:bg-gray-300 transition">-</button>
+                    <span id="quantity-${itemId}" class="font-bold text-lg w-6 text-center">0</span>
+                    <button data-item-id="${itemId}" class="increase-btn bg-blue-500 text-white w-8 h-8 rounded-full font-bold text-lg hover:bg-blue-600 transition">+</button>
+                </div>
+            `;
+            div.querySelector('.increase-btn').addEventListener('click', () => updateCart(item, 1));
+            div.querySelector('.decrease-btn').addEventListener('click', () => updateCart(item, -1));
+            return div;
+        }
+
+        function updateCart(item, change) {
+            // 使用與 createMenuItemElement 相同的邏輯來取得 itemId
+            const itemId = item.id || item.menu_item_id || item.temp_id || `temp_${Date.now()}_${Math.random()}`;
+            const currentQuantity = cart[itemId] || 0;
+            const newQuantity = Math.max(0, currentQuantity + change);
+            cart[itemId] = newQuantity;
+            document.getElementById(`quantity-${itemId}`).textContent = newQuantity;
+            updateTotalPrice();
+        }
+
+        function updateTotalPrice() {
+            let total = 0;
+            for (const itemId in cart) {
+                const quantity = cart[itemId];
+                if (quantity > 0) {
+                    // 使用多種可能的 ID 欄位來匹配項目
+                    const item = currentMenuItems.find(i => 
+                        (i.id == itemId) || 
+                        (i.menu_item_id == itemId) || 
+                        (i.temp_id == itemId)
+                    );
+                    if (item) {
+                        // 安全處理價格
+                        const safeNum = (value) => {
+                            if (value === null || value === undefined) return 0;
+                            const num = Number(value);
+                            return isNaN(num) ? 0 : num;
+                        };
+                        const price = safeNum(item.price || item.price_small || 0);
+                        total += price * quantity;
+                    }
+                }
+            }
+            document.getElementById('total-price').textContent = total;
+            document.getElementById('submit-order').disabled = total === 0;
+        }
+
+        function showOrderConfirmation(result, orderDetails) {
+            const mainContent = document.getElementById('main-content');
+            const cartFooter = document.getElementById('cart-footer');
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            // 隱藏購物車
+            cartFooter.classList.add('hidden');
+            
+            // 顯示確認頁面
+            mainContent.innerHTML = `
+                <div class="text-center py-20">
+                    <div class="text-6xl mb-4">✅</div>
+                    <h1 class="text-2xl font-bold text-gray-800 mb-4">${texts.orderConfirmed}</h1>
+                    <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+                        <p class="text-lg font-semibold text-gray-700 mb-4">📋 ${texts.orderNumber}: ${result.order_id}</p>
+                        <p class="text-lg font-semibold text-blue-600 mb-4">💰 ${texts.totalAmount}: NT$ ${document.getElementById('total-price').textContent}</p>
+                        <div class="text-left bg-gray-50 p-4 rounded-md mb-4">
+                            <p class="font-semibold text-gray-700 mb-2">📝 ${texts.orderDetails}:</p>
+                            <p class="text-sm text-gray-600 whitespace-pre-line">${orderDetails}</p>
+                        </div>
+                        <p class="text-gray-600">${texts.thankYou}</p>
+                    </div>
+                    <button onclick="closeLiffWindow()" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors">
+                        ${texts.closeWindow}
+                    </button>
+                </div>
+            `;
+        }
+
+        function closeLiffWindow() {
+            if (liffInitialized && liff.isLoggedIn()) {
+                liff.closeWindow();
+            } else {
+                // 如果不在 LIFF 環境中，顯示一般訊息
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                alert(texts.orderSuccess);
+            }
+        }
+
+        document.getElementById('submit-order').addEventListener('click', async () => {
+            if (Object.keys(cart).length === 0 || Object.values(cart).every(q => q === 0)) {
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                alert(texts.emptyCart);
+                return;
+            }
+            
+            try {
+                // 1. 驗證購物車資料
+                const cartItems = Object.entries(cart)
+                    .filter(([_, quantity]) => quantity > 0);
+                
+                if (cartItems.length === 0) {
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    alert(texts.emptyCart);
+                    return;
+                }
+                
+                // 2. 建立訂單項目（支援多種格式，與後端相容）
+                let totalAmount = 0;
+                const orderItems = cartItems.map(([itemId, quantity]) => {
+                    // 使用多種可能的 ID 欄位來匹配項目
+                    const item = currentMenuItems.find(i => 
+                        (i.id == itemId) || 
+                        (i.menu_item_id == itemId) || 
+                        (i.temp_id == itemId)
+                    );
+                    
+                    if (!item) {
+                        console.warn('找不到菜單項目:', itemId);
+                        return null;
+                    }
+                    
+                    // 安全處理價格（支援多種價格欄位）
+                    const safeNum = (value) => {
+                        if (value === null || value === undefined) return 0;
+                        const num = Number(value);
+                        return isNaN(num) ? 0 : num;
+                    };
+                    const priceUnit = safeNum(item.price_small || item.price || item.price_unit || 0);
+                    if (priceUnit <= 0) {
+                        console.error('價格無效:', item);
+                        const texts = translations[currentLanguage] || translations['zh-TW'];
+                        const itemName = item.translated_name || item.original_name || item.item_name || 'Item';
+                        alert(`${itemName} ${texts.invalidPrice}`);
+                        throw new Error('Invalid price');
+                    }
+                    
+                    // 驗證數量
+                    if (!quantity || quantity <= 0) {
+                        console.warn('數量無效:', quantity);
+                        return null;
+                    }
+                    
+                    const itemTotal = priceUnit * quantity;
+                    totalAmount += itemTotal;
+                    
+                    // 返回訂單項目（支援多種欄位名稱格式）
+                    return {
+                        // 支援多種 ID 格式，但對於 OCR 菜單可能為 null
+                        menu_item_id: item.menu_item_id || item.id || item.temp_id || null,
+                        // 支援多種數量欄位名稱
+                        quantity: quantity,  // 後端也支援 qty
+                        qty: quantity,      // 後端也支援 quantity
+                        // 支援多種價格欄位名稱
+                        price_unit: priceUnit,  // 後端也支援 price 或 price_small
+                        price: priceUnit,       // 後端也支援 price_unit
+                        // 支援新的雙語格式
+                        name: item.name && typeof item.name === 'object' ? item.name : {
+                            original: item.original_name || item.item_name || 'Untitled',
+                            translated: item.translated_name || item.item_name || 'Untitled'
+                        },
+                        // 額外資訊（可選）
+                        item_name: item.translated_name || item.original_name || item.item_name,
+                        subtotal: itemTotal
+                    };
+                }).filter(Boolean); // 過濾掉無效項目
+
+                if (orderItems.length === 0) {
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    alert(texts.noValidItems);
+                    return;
+                }
+
+                // 3. 準備請求資料（與後端完全相容）
+                const payload = {
+                    line_user_id: currentUserId, // 加入使用者 ID
+                    store_id: currentStore || 'non-partner',
+                    store_name: currentStoreName, // 加入店家名稱
+                    items: orderItems,
+                    total: totalAmount,  // 可選，後端會重新計算
+                    language: currentLanguage
+                };
+                
+                // 如果是OCR訂單，添加OCR菜單ID
+                if (window.currentOcrMenuId) {
+                    payload.ocr_menu_id = window.currentOcrMenuId;
+                    console.log('添加OCR菜單ID到訂單:', window.currentOcrMenuId);
+                }
+
+                console.log('發送訂單 payload:', payload);
+
+                // 4. 發送請求 - 檢查是否為OCR菜單訂單
+                const isOcrOrder = orderItems.some(item => 
+                    item.menu_item_id && item.menu_item_id.toString().startsWith('ocr_')
+                );
+                
+                const endpoint = isOcrOrder ? '/api/orders/ocr' : '/api/orders';
+                console.log(`使用端點: ${endpoint}, 是否為OCR訂單: ${isOcrOrder}`);
+                
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                // 5. 處理回應（改善錯誤處理）
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error('後端錯誤回應:', errorData);
+                    
+                    // 顯示詳細的錯誤訊息
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    let errorMessage = texts.orderCreateFailed;
+                    if (errorData.validation_errors) {
+                        errorMessage = `${texts.validationFailed}\n${errorData.validation_errors.join('\n')}`;
+                    } else if (errorData.missing_fields) {
+                        errorMessage = `${texts.missingFields}${errorData.missing_fields.join(', ')}`;
+                    } else if (errorData.detail) {
+                        errorMessage = errorData.detail;
+                    } else if (errorData.message) {
+                        errorMessage = errorData.message;
+                    } else if (errorData.error) {
+                        errorMessage = errorData.error;
+                    } else {
+                        errorMessage = `${response.statusText} (${response.status})`;
+                    }
+                    
+                    throw new Error(errorMessage);
+                }
+
+                const result = await response.json();
+                
+                const orderDetails = orderItems
+                    .map(item => {
+                        // 使用多種可能的 ID 欄位來匹配項目
+                        const menuItem = currentMenuItems.find(i => 
+                            (i.id == item.menu_item_id) || 
+                            (i.menu_item_id == item.menu_item_id) || 
+                            (i.temp_id == item.menu_item_id)
+                        );
+                        if (menuItem) {
+                            // 支援新的雙語格式
+                            let itemName;
+                            if (menuItem.name && typeof menuItem.name === 'object' && menuItem.name.original && menuItem.name.translated) {
+                                // 新格式：根據使用者語言選擇菜名
+                                if (currentLanguage.startsWith('zh')) {
+                                    itemName = menuItem.name.original; // 中文使用者使用中文菜名
+                                } else {
+                                    itemName = menuItem.name.translated; // 其他語言使用者使用翻譯菜名
+                                }
+                            } else {
+                                // 舊格式：優先使用 translated_name，然後是 original_name
+                                itemName = menuItem.translated_name || menuItem.original_name || menuItem.item_name || 'Untitled';
+                            }
+                            return `${itemName} x ${item.quantity || item.qty}`;
+                        }
+                        const texts = translations[currentLanguage] || translations['zh-TW'];
+                        return `Item ${item.menu_item_id} x ${item.quantity || item.qty}`;
+                    }).join('\n');
+
+                // 顯示訂單確認頁面
+                showOrderConfirmation(result, orderDetails);
+                
+                // 清空購物車
+                cart = {};
+                currentMenuItems.forEach(item => {
+                    const itemId = item.id || item.menu_item_id || item.temp_id;
+                    const quantityElement = document.getElementById(`quantity-${itemId}`);
+                    if (quantityElement) {
+                        quantityElement.textContent = '0';
+                    }
+                });
+                updateTotalPrice();
+                
+            } catch (error) {
+                console.error('送出訂單失敗:', error);
+                const texts = translations[currentLanguage] || translations['zh-TW'];
+                alert(`${texts.orderFailed}${error.message}`);
+            }
+        });
+    </script>
+
+</body>
+</html> 

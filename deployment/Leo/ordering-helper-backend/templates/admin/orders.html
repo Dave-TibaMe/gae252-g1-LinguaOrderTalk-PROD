@@ -1,0 +1,158 @@
+{% extends "admin/base.html" %}
+
+{% block title %}訂單管理 - 點餐傳聲筒後台{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="h3 mb-4">
+            <i class="fas fa-shopping-cart"></i> 訂單管理
+        </h1>
+    </div>
+</div>
+
+<!-- 訂單列表 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="fas fa-list"></i> 訂單列表
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if orders %}
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="ordersTable" width="100%" cellspacing="0">
+                        <thead>
+                            <tr>
+                                <th>訂單編號</th>
+                                <th>使用者</th>
+                                <th>店家</th>
+                                <th>總金額</th>
+                                <th>狀態</th>
+                                <th>訂單時間</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for order in orders %}
+                            <tr>
+                                <td>{{ order.order_id }}</td>
+                                <td>{{ order.user.line_user_id if order.user else '未知使用者' }}</td>
+                                <td>{{ order.store.store_name if order.store else '未知店家' }}</td>
+                                <td>${{ order.total_amount }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if order.status == 'completed' else 'warning' if order.status == 'pending' else 'danger' }}">
+                                        {{ order.status }}
+                                    </span>
+                                </td>
+                                <td>{{ order.order_time.strftime('%Y-%m-%d %H:%M') if order.order_time else '未知' }}</td>
+                                <td>
+                                    <button class="btn btn-info btn-sm" onclick="viewOrderDetails({{ order.order_id }})">
+                                        <i class="fas fa-eye"></i> 詳情
+                                    </button>
+                                    <button class="btn btn-warning btn-sm" onclick="updateOrderStatus({{ order.order_id }})">
+                                        <i class="fas fa-edit"></i> 更新狀態
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-shopping-cart fa-3x text-gray-300 mb-3"></i>
+                    <p class="text-gray-500">目前沒有訂單記錄</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 訂單詳情 Modal -->
+<div class="modal fade" id="orderDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">訂單詳情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="orderDetailsContent">
+                    <!-- 訂單詳情內容將在這裡動態載入 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 更新訂單狀態 Modal -->
+<div class="modal fade" id="updateStatusModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">更新訂單狀態</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="updateStatusForm">
+                    <div class="mb-3">
+                        <label for="orderStatus" class="form-label">訂單狀態</label>
+                        <select class="form-control" id="orderStatus">
+                            <option value="pending">待處理</option>
+                            <option value="processing">處理中</option>
+                            <option value="completed">已完成</option>
+                            <option value="cancelled">已取消</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="confirmUpdateStatus()">更新</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentOrderId = null;
+
+function viewOrderDetails(orderId) {
+    // TODO: 實作查看訂單詳情功能
+    alert('訂單詳情功能開發中...');
+}
+
+function updateOrderStatus(orderId) {
+    currentOrderId = orderId;
+    $('#updateStatusModal').modal('show');
+}
+
+function confirmUpdateStatus() {
+    const newStatus = document.getElementById('orderStatus').value;
+    
+    // TODO: 實作更新訂單狀態的 API 呼叫
+    alert(`更新訂單 ${currentOrderId} 狀態為 ${newStatus} - 功能開發中...`);
+    $('#updateStatusModal').modal('hide');
+}
+
+// 初始化 DataTable
+$(document).ready(function() {
+    $('#ordersTable').DataTable({
+        "order": [[ 5, "desc" ]], // 按訂單時間降序排列
+        "pageLength": 25,
+        "language": {
+            "url": "//cdn.datatables.net/plug-ins/1.10.24/i18n/Chinese-traditional.json"
+        }
+    });
+});
+</script>
+{% endblock %} 
