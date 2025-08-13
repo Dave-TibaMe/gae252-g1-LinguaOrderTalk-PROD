@@ -1,0 +1,104 @@
+[
+  {
+    "lang_code": "ar",
+    "lang_name": [
+      "العربية"
+    ]
+  },
+  {
+    "lang_code": "de",
+    "lang_name": [
+      "Deutsch"
+    ]
+  },
+  {
+    "lang_code": "en",
+    "lang_name": [
+      "English"
+    ]
+  },
+  {
+    "lang_code": "es",
+    "lang_name": [
+      "español"
+    ]
+  },
+  {
+    "lang_code": "fr",
+    "lang_name": [
+      "Français"
+    ]
+  },
+  {
+    "lang_code": "id",
+    "lang_name": [
+      "Indonesia"
+    ]
+  },
+  {
+    "lang_code": "it",
+    "lang_name": [
+      "Italiano"
+    ]
+  },
+  {
+    "lang_code": "ja",
+    "lang_name": [
+      "日本語"
+    ]
+  },
+  {
+    "lang_code": "ko",
+    "lang_name": [
+      "한국어"
+    ]
+  },
+  {
+    "lang_code": "ms",
+    "lang_name": [
+      "Bahasa Melayu"
+    ]
+  },
+  {
+    "lang_code": "pt",
+    "lang_name": [
+      "Português"
+    ]
+  },
+  {
+    "lang_code": "ru",
+    "lang_name": [
+      "русский"
+    ]
+  },
+  {
+    "lang_code": "th",
+    "lang_name": [
+      "ไทย"
+    ]
+  },
+  {
+    "lang_code": "tr",
+    "lang_name": [
+      "Türkçe"
+    ]
+  },
+  {
+    "lang_code": "vi",
+    "lang_name": [
+      "Việt"
+    ]
+  },
+  {
+    "lang_code": "zh-Hans",
+    "lang_name": [
+      "简体中文"
+    ]
+  },
+  {
+    "lang_code": "zh-Hant",
+    "lang_name": [
+      "繁體中文"
+    ]
+  }
+]

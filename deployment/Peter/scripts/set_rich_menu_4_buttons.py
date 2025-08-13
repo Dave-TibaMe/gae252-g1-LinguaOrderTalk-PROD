@@ -71,7 +71,7 @@ def main():
 
     # 步驟三：上傳圖片
     print("\n步驟 3/4: 正在上傳圖文選單圖片...")
-    image_path = os.path.join(os.path.dirname(__file__), 'rich_menu_4_grid.jpg')
+    image_path = os.path.join(os.path.dirname(__file__), 'rich_menu_4_buttons.jpg')
     
     if not os.path.exists(image_path):
         print(f"錯誤：找不到圖片檔案於 {image_path}")

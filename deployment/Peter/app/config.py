@@ -13,6 +13,6 @@ class Config:
     LIFF_ID = os.environ.get('LIFF_ID')
 
     # Google Maps API Key
-    Maps_API_KEY = os.environ.get('Maps_API_KEY')
+    MAPS_API_KEY = os.environ.get('MAPS_API_KEY')
 
     DATABASE_URL = os.environ.get("DATABASE_URL")
