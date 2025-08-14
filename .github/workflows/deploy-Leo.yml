@@ -1,4 +1,4 @@
-# deploy-Leo.yml 20250814 1121
+# deploy-Leo.yml 20250814 1133
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -26,6 +26,7 @@ env:
   DB_DATABASE: ${{ secrets.DB_DATABASE }}
   LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.CHANNEL_ACCESS_TOKEN }}
   LINE_CHANNEL_SECRET: ${{ secrets.CHANNEL_SECRET }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
 # 定義工作
 jobs:
@@ -63,5 +64,5 @@ jobs:
             DB_DATABASE=${{ env.DB_DATABASE }}
             LINE_CHANNEL_ACCESS_TOKEN=${{ env.LINE_CHANNEL_ACCESS_TOKEN }}
             LINE_CHANNEL_SECRET=${{ env.LINE_CHANNEL_SECRET }}
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            GEMINI_API_KEY=${{ env.GEMINI_API_KEY }}
 
