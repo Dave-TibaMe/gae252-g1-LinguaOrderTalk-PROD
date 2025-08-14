@@ -1146,6 +1146,21 @@ def create_order():
                     "ocr_menu_id": ocr_menu_id
                 }), 201
             
+            # 如果不是OCR菜單訂單，也需要返回成功響應
+            else:
+                # 只在非訪客模式下發送 LINE 通知
+                if not guest_mode:
+                    send_complete_order_notification(new_order.order_id, frontend_store_name)
+                
+                return jsonify({
+                    "message": "訂單建立成功", 
+                    "order_id": new_order.order_id,
+                    "order_details": order_details,
+                    "total_amount": total_amount,
+                    "confirmation": order_confirmation,
+                    "voice_generated": voice_path is not None
+                }), 201
+            
         except Exception as e:
             db.session.rollback()
             return jsonify({
@@ -1428,8 +1443,8 @@ def get_order_voice(order_id):
         if voice_path and os.path.exists(voice_path):
             # 構建語音檔 URL
             fname = os.path.basename(voice_path)
-            base_url = os.getenv('BASE_URL', 'https://ordering-helper-backend-1095766716155.asia-east1.run.app')
-            audio_url = f"{base_url}/api/voices/{fname}"
+            from ..config import URLConfig
+            audio_url = URLConfig.get_voice_url(fname)
             
             return jsonify({
                 "success": True,
@@ -1565,8 +1580,8 @@ def generate_custom_voice():
         if voice_path and os.path.exists(voice_path):
             # 構建語音檔 URL
             fname = os.path.basename(voice_path)
-            base_url = os.getenv('BASE_URL', 'https://ordering-helper-backend-1095766716155.asia-east1.run.app')
-            audio_url = f"{base_url}/api/voices/{fname}"
+            from ..config import URLConfig
+            audio_url = URLConfig.get_voice_url(fname)
             
             return jsonify({
                 "success": True,
@@ -1608,8 +1623,8 @@ def generate_enhanced_voice():
         if voice_path and os.path.exists(voice_path):
             # 構建語音檔 URL
             fname = os.path.basename(voice_path)
-            base_url = os.getenv('BASE_URL', 'https://ordering-helper-backend-1095766716155.asia-east1.run.app')
-            audio_url = f"{base_url}/api/voices/{fname}"
+            from ..config import URLConfig
+            audio_url = URLConfig.get_voice_url(fname)
             
             return jsonify({
                 "success": True,

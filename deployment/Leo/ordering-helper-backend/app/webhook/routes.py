@@ -87,7 +87,8 @@ def process_voice_order_background(order_id, user_id):
             
             # 2. 構建語音檔 URL
             fname = os.path.basename(voice_file_path)
-            base_url = os.getenv('BASE_URL', 'https://ordering-helper-backend-1095766716155.asia-east1.run.app')
+            from ..config import URLConfig
+            base_url = URLConfig.get_base_url()
             audio_url = f"{base_url}/api/voices/{fname}"
             
             # 3. 發送語音訊息到 LINE
