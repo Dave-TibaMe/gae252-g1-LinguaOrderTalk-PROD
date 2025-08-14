@@ -9,7 +9,9 @@ const API_CONFIG = {
   USE_PROXY: true,
   
   // 方案2: 直接調用 Cloud Run (備選)
-  CLOUD_RUN_URL: 'https://ordering-helper-backend-1095766716155.asia-east1.run.app',
+  // CLOUD_RUN_URL: 'https://ordering-helper-backend-1095766716155.asia-east1.run.app',
+  CLOUD_RUN_URL: 'https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app',
+  
   
   // Azure Static Web Apps 域名
   SWA_DOMAIN: 'https://green-beach-0f9762500.1.azurestaticapps.net'

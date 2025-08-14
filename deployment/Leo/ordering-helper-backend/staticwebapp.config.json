@@ -2,7 +2,7 @@
   "routes": [
     {
       "route": "/api/*",
-      "rewrite": "https://ordering-helper-backend-1095766716155.asia-east1.run.app/api/{*}"
+      "rewrite": "https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app/api/{*}"
     }
   ],
   "globalHeaders": {
