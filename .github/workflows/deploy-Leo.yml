@@ -1,4 +1,4 @@
-# deploy-Leo.yml 20250813 2335
+# deploy-Leo.yml 20250814 1121
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -52,7 +52,7 @@ jobs:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
           # 告訴 Cloud Run 從 deployment/Leo/ordering-helper-backend 目錄下的 Dockerfile 建置
-          source: 'deployment/Leo//ordering-helper-backend'
+          source: 'deployment/Leo/ordering-helper-backend'
           # 將環境變數傳遞給 Cloud Run 服務
           env_vars: |
             AZURE_SPEECH_KEY=${{ env.AZURE_SPEECH_KEY }}
