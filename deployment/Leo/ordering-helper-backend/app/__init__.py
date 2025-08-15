@@ -27,6 +27,7 @@ def create_app():
     # 允許來自 Azure 靜態網頁的跨來源請求
     allowed_origins = [
         "https://green-beach-0f9762500.1.azurestaticapps.net",
+        "https://proud-cliff-0c3c37b00.1.azurestaticapps.net",
         "https://liff.line.me",  # LINE LIFF 域名
         "https://liff.line.me:443",  # LINE LIFF 域名 (HTTPS)
         "http://localhost:3000",  # 本地開發

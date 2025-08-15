@@ -14,7 +14,8 @@ const API_CONFIG = {
   
   
   // Azure Static Web Apps 域名
-  SWA_DOMAIN: 'https://green-beach-0f9762500.1.azurestaticapps.net'
+  // SWA_DOMAIN: 'https://green-beach-0f9762500.1.azurestaticapps.net'
+SWA_DOMAIN: 'https://proud-cliff-0c3c37b00.1.azurestaticapps.net'
 };
 
 /**

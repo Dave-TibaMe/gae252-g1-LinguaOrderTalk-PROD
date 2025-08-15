@@ -6,7 +6,7 @@
     }
   ],
   "globalHeaders": {
-    "Access-Control-Allow-Origin": "https://green-beach-0f9762500.1.azurestaticapps.net"
+    "Access-Control-Allow-Origin": "https://proud-cliff-0c3c37b00.1.azurestaticapps.net"
   },
   "navigationFallback": {
     "rewrite": "/index.html",
