@@ -637,8 +637,8 @@ async def create_order_details_message(
 ) -> TextMessage:
     """
     建立一則顯示訂單詳細內容的純文字訊息。
+    (此版本將所有需翻譯的文字合併到一次批次請求中)
     """
-    # 檢查訂單是否有店家資料，若無則返回通用錯誤訊息。
     if not order.store:
         logger.warning(
             f"create_order_details_message called for order_id {order.order_id} which has no associated store."
@@ -650,8 +650,8 @@ async def create_order_details_message(
             lang_code_map=lang_code_map,
         )
 
-    # --- 批次翻譯 ---
-    # 收集所有靜態標籤文字和動態的店家名稱。
+    # --- 1. 合併所有待翻譯文字 ---
+    # a. 靜態標籤文字
     template_keys = [
         "order_details_title",
         "order_details_store",
@@ -659,10 +659,22 @@ async def create_order_details_message(
         "order_details_total",
         "order_details_items_header",
     ]
-    default_texts = [REPLY_TEMPLATES.get(key, "") for key in template_keys]
-    all_texts_to_translate = default_texts + [order.store.store_name]
+    static_texts = [REPLY_TEMPLATES.get(key, "") for key in template_keys]
 
-    # 執行批次翻譯。
+    # b. 動態文字：店家名稱
+    store_name = order.store.store_name
+
+    # c. 動態文字：所有品項的原始名稱
+    original_item_names = [
+        item.original_name
+        for item in order.items
+        if item.original_name
+    ]
+
+    # 將靜態標籤、店家名稱、品項名稱全部放入一個列表
+    all_texts_to_translate = static_texts + [store_name] + original_item_names
+
+    # --- 2. 執行單次批次翻譯 ---
     translated_texts = await translate_texts_batch(
         texts=all_texts_to_translate,
         user=user,
@@ -670,32 +682,40 @@ async def create_order_details_message(
         lang_code_map=lang_code_map,
     )
 
-    # --- 組合訊息文字 ---
-    title, store_label, time_label, total_label, items_header = translated_texts[:5]
-    translated_store_name = translated_texts[5]
+    # --- 3. 拆解翻譯結果 ---
+    num_static = len(static_texts)
+    
+    # a. 取得翻譯後的靜態標籤
+    title, store_label, time_label, total_label, items_header = translated_texts[:num_static]
+    
+    # b. 取得翻譯後的店家名稱
+    translated_store_name = translated_texts[num_static]
+    
+    # c. 取得翻譯後的品項名稱列表
+    translated_item_names = translated_texts[num_static + 1:]
+    
+    # d. 建立品項名稱的映射字典，方便後續查找
+    translation_map = dict(zip(original_item_names, translated_item_names))
 
-    # 使用一個列表來分段建立訊息內容，最後再用換行符 `\n` 組合起來。
+    # --- 4. 組合最終訊息文字 ---
     details_parts = [
         f"<{title}>",
         "--------------------",
         f"{store_label}: {translated_store_name}",
         f"{time_label}: {order.order_time.strftime('%Y-%m-%d %H:%M')}",
         f"{total_label}: ${order.total_amount}",
-        "\n" + f"{items_header}:",
     ]
-    # 如果訂單中有品項...
+
     if order.items:
-        # 遍歷所有品項並將其資訊加入到列表中。
+        details_parts.append("\n" + f"{items_header}:")
         for item in order.items:
-            # 優先使用翻譯後的品項名稱。
-            item_name = item.translated_name or item.original_name
+            # 從映射中取得翻譯名稱，如果找不到則備用為原始名稱
+            item_name = translation_map.get(item.original_name, item.original_name)
             details_parts.append(
                 f"- {item_name} x {item.quantity_small}  (${item.subtotal})"
             )
 
-    # 將列表中的所有部分用換行符組合
     reply_text = "\n".join(details_parts)
-    # 返回一個包含最終文字的 TextMessage 物件。
     return TextMessage(text=reply_text)
 
 
