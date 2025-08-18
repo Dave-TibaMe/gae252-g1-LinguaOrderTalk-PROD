@@ -1,4 +1,4 @@
-# deploy-Slash.yml 20250815 2328
+# deploy-Slash.yml 20250818 1129
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -23,7 +23,6 @@ env:
   DB_USER: ${{ secrets.DB_USER }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
   DB_DATABASE: ${{ secrets.DB_DATABASE }}
-  CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
 
 # 定義工作
 jobs:
@@ -58,6 +57,5 @@ jobs:
             DB_USER=${{ env.DB_USER }}
             DB_PASSWORD=${{ env.DB_PASSWORD }}
             DB_DATABASE=${{ env.DB_DATABASE }}
-            CLOUD_SQL_CONNECTION_NAME=${{ env.CLOUD_SQL_CONNECTION_NAME }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
