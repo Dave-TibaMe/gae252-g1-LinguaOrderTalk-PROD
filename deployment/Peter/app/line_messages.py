@@ -54,7 +54,7 @@ REPLY_TEMPLATES = {
     "no_stores_found": "對不起，您附近找不到任何店家。",
     "start_ordering": "開始點餐",
     "order_again": "再次訂購",
-    "view_order_details": "查看訂單詳情",
+    "view_order_details": "看詳情",
     "no_order_history": "您目前沒有任何歷史訂單。",
     "order_details_title": "訂單詳情",
     "order_details_store": "店家",
