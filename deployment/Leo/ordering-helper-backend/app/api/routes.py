@@ -782,8 +782,11 @@ def create_order():
             menu_item_id = item_data.get('menu_item_id') or item_data.get('id')
             quantity = item_data.get('quantity') or item_data.get('qty') or item_data.get('quantity_small')
             
+            # 將 menu_item_id 轉換為字串以便檢查前綴
+            menu_item_id_str = str(menu_item_id) if menu_item_id is not None else None
+            
             # 檢查是否為OCR菜單項目（以 ocr_ 開頭）
-            if menu_item_id and menu_item_id.startswith('ocr_'):
+            if menu_item_id_str and menu_item_id_str.startswith('ocr_'):
                 # 處理OCR菜單項目
                 price = item_data.get('price') or item_data.get('price_small') or item_data.get('price_unit') or 0
                 
@@ -797,7 +800,7 @@ def create_order():
                 
                 # 提取OCR菜單ID
                 if not ocr_menu_id:
-                    parts = menu_item_id.split('_')
+                    parts = menu_item_id_str.split('_')
                     if len(parts) >= 3:
                         ocr_menu_id = int(parts[1])
                 
@@ -873,7 +876,7 @@ def create_order():
                     validation_errors.append(f"項目 {i+1}: 創建OCR菜單項目失敗 - {str(e)}")
                     continue
             # 檢查是否為臨時菜單項目（以 temp_ 開頭）
-            elif menu_item_id and menu_item_id.startswith('temp_'):
+            elif menu_item_id_str and menu_item_id_str.startswith('temp_'):
                 # 處理臨時菜單項目
                 price = item_data.get('price') or item_data.get('price_small') or item_data.get('price_unit') or 0
                 item_name = item_data.get('item_name') or item_data.get('name') or item_data.get('original_name') or f"項目 {i+1}"
@@ -1086,7 +1089,15 @@ def create_order():
             print(f"✅ 訂單已創建，ID: {order_id}")
             
             # 創建訂單項目
+            print(f"📝 準備創建 {len(order_items_to_create)} 個訂單項目...")
             for i, order_item in enumerate(order_items_to_create):
+                print(f"📋 處理訂單項目 {i+1}:")
+                print(f"   menu_item_id: {order_item.menu_item_id}")
+                print(f"   quantity_small: {order_item.quantity_small}")
+                print(f"   subtotal: {order_item.subtotal}")
+                print(f"   original_name: {order_item.original_name}")
+                print(f"   translated_name: {order_item.translated_name}")
+                
                 order_item_sql = """
                 INSERT INTO order_items (order_id, menu_item_id, quantity_small, subtotal, original_name, translated_name, created_at)
                 VALUES (:order_id, :menu_item_id, :quantity_small, :subtotal, :original_name, :translated_name, :created_at)
@@ -1144,6 +1155,7 @@ def create_order():
             
             # 生成中文語音檔
             print(f"🔧 準備生成語音檔...")
+            voice_path = None
             try:
                 voice_path = generate_voice_order(new_order.order_id)
                 print(f"✅ 語音檔生成成功: {voice_path}")
@@ -1152,6 +1164,7 @@ def create_order():
                 print(f"錯誤類型: {type(e).__name__}")
                 import traceback
                 traceback.print_exc()
+                # 不拋出異常，繼續執行
                 voice_path = None
             
             # 如果是OCR菜單訂單，建立訂單摘要並儲存到資料庫
@@ -1229,10 +1242,14 @@ def create_order():
             
         except Exception as e:
             db.session.rollback()
+            import traceback
+            error_traceback = traceback.format_exc()
             print(f"❌ 訂單建立失敗: {str(e)}")
+            print(f"❌ 錯誤追蹤: {error_traceback}")
             return jsonify({
                 "error": "訂單建立失敗",
                 "details": str(e),
+                "traceback": error_traceback,
                 "debug_info": {
                     "store_id": store_db_id,
                     "user_id": user.user_id if user else None,
@@ -1243,9 +1260,14 @@ def create_order():
         
     except Exception as e:
         db.session.rollback()
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"❌ 訂單建立失敗（外層異常）: {str(e)}")
+        print(f"❌ 錯誤追蹤: {error_traceback}")
         return jsonify({
             "error": "訂單建立失敗",
-            "details": str(e)
+            "details": str(e),
+            "traceback": error_traceback
         }), 500
 
 @api_bp.route('/orders/temp', methods=['POST', 'OPTIONS'])
@@ -3285,8 +3307,11 @@ def create_ocr_order():
             menu_item_id = item_data.get('menu_item_id') or item_data.get('id')
             quantity = item_data.get('quantity') or item_data.get('qty') or item_data.get('quantity_small')
             
+            # 將 menu_item_id 轉換為字串以便檢查前綴
+            menu_item_id_str = str(menu_item_id) if menu_item_id is not None else None
+            
             # 檢查是否為OCR菜單項目（以 ocr_ 開頭）
-            if menu_item_id and menu_item_id.startswith('ocr_'):
+            if menu_item_id_str and menu_item_id_str.startswith('ocr_'):
                 # 處理OCR菜單項目
                 price = item_data.get('price') or item_data.get('price_small') or item_data.get('price_unit') or 0
                 

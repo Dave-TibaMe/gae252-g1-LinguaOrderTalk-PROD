@@ -407,68 +407,57 @@ def process_menu_with_gemini(image_path, target_language='en'):
             # 解析回應
             if response and hasattr(response, 'text'):
                 try:
-                    # 嘗試解析 JSON
+                    # 使用新的 JSON 解析函數
                     result_text = response.text.strip()
-                    print(f"Gemini 回應: {result_text[:200]}...")
+                    print(f"Gemini 回應長度: {len(result_text)} 字符")
+                    print(f"Gemini 回應前200字符: {result_text[:200]}...")
                     
-                    # 如果回應包含 JSON，嘗試解析
-                    if '{' in result_text and '}' in result_text:
-                        # 提取 JSON 部分
-                        start = result_text.find('{')
-                        end = result_text.rfind('}') + 1
-                        json_text = result_text[start:end]
-                        
-                        result = json.loads(json_text)
-                        
-                        # 驗證結果格式
-                        if not isinstance(result, dict):
-                            return {
-                                'success': False,
-                                'error': 'Gemini 回應格式錯誤',
-                                'processing_notes': '回應不是有效的 JSON 物件'
-                            }
-                        
-                        # 檢查必要欄位
-                        if 'success' not in result:
-                            result['success'] = True
-                        
-                        if 'menu_items' not in result:
-                            result['menu_items'] = []
-                        
-                        # 主要成功條件：以 menu_items 為準，而不是店家資訊
-                        if not result.get('menu_items') or len(result['menu_items']) == 0:
-                            result['success'] = False
-                            result['error'] = '無法從圖片中辨識菜單項目'
-                            result['processing_notes'] = '圖片可能模糊或不是菜單'
-                            return result
-                        
-                        if 'store_info' not in result:
-                            result['store_info'] = {
-                                'name': None,
-                                'address': None,
-                                'phone': None
-                            }
-                        
-                        # 保底填值：確保店家資訊欄位不會是 None，而是明確的 null 值
-                        if result.get('store_info'):
-                            store_info = result['store_info']
-                            if store_info.get('name') is None:
-                                store_info['name'] = None
-                                store_info['note'] = 'store_name_not_found_in_image'
-                            if store_info.get('address') is None:
-                                store_info['address'] = None
-                            if store_info.get('phone') is None:
-                                store_info['phone'] = None
-                        
-                        print(f"成功處理菜單，共 {len(result.get('menu_items', []))} 個項目")
-                        return result
-                    else:
-                        # 如果沒有 JSON，嘗試結構化處理
+                    # 使用強健的 JSON 解析函數
+                    result = parse_gemini_json_response(result_text)
+                    print("JSON 解析成功")
+                    
+                    # 驗證結果格式
+                    if not isinstance(result, dict):
                         return {
                             'success': False,
-                            'error': '無法從圖片中辨識菜單',
-                            'processing_notes': '圖片可能模糊或不是菜單'
+                            'error': 'Gemini 回應格式錯誤',
+                            'processing_notes': '回應不是有效的 JSON 物件'
                         }
+                    
+                    # 檢查必要欄位
+                    if 'success' not in result:
+                        result['success'] = True
+                    
+                    if 'menu_items' not in result:
+                        result['menu_items'] = []
+                    
+                    # 主要成功條件：以 menu_items 為準，而不是店家資訊
+                    if not result.get('menu_items') or len(result['menu_items']) == 0:
+                        result['success'] = False
+                        result['error'] = '無法從圖片中辨識菜單項目'
+                        result['processing_notes'] = '圖片可能模糊或不是菜單'
+                        return result
+                    
+                    if 'store_info' not in result:
+                        result['store_info'] = {
+                            'name': None,
+                            'address': None,
+                            'phone': None
+                        }
+                    
+                    # 保底填值：確保店家資訊欄位不會是 None，而是明確的 null 值
+                    if result.get('store_info'):
+                        store_info = result['store_info']
+                        if store_info.get('name') is None:
+                            store_info['name'] = None
+                            store_info['note'] = 'store_name_not_found_in_image'
+                        if store_info.get('address') is None:
+                            store_info['address'] = None
+                        if store_info.get('phone') is None:
+                            store_info['phone'] = None
+                    
+                    print(f"成功處理菜單，共 {len(result.get('menu_items', []))} 個項目")
+                    return result
                         
                 except json.JSONDecodeError as e:
                     print(f"JSON 解析失敗: {e}")
@@ -509,6 +498,71 @@ def process_menu_with_gemini(image_path, target_language='en'):
             'error': f'菜單處理失敗: {str(e)}',
             'processing_notes': '請檢查圖片格式和大小'
         }
+
+def parse_gemini_json_response(response_text):
+    """
+    解析 Gemini API 的 JSON 回應，包含多種修復策略
+    """
+    import re
+    import ast
+    
+    try:
+        # 清理回應文本
+        result_text = response_text.strip()
+        
+        # 如果回應包含 JSON，嘗試解析
+        if '{' in result_text and '}' in result_text:
+            # 提取 JSON 部分
+            start = result_text.find('{')
+            end = result_text.rfind('}') + 1
+            json_text = result_text[start:end]
+            
+            # 策略1: 直接解析
+            try:
+                return json.loads(json_text)
+            except json.JSONDecodeError as e:
+                print(f"直接解析失敗: {e}")
+                
+                # 策略2: 修復常見問題
+                try:
+                    # 移除尾隨逗號
+                    json_text = re.sub(r',(\s*[}\]])', r'\1', json_text)
+                    # 修復引號問題
+                    json_text = re.sub(r'([^\\])"([^"]*?)([^\\])"', r'\1"\2\3"', json_text)
+                    # 移除可能的控制字符
+                    json_text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_text)
+                    
+                    return json.loads(json_text)
+                except json.JSONDecodeError as e2:
+                    print(f"修復後解析失敗: {e2}")
+                    
+                    # 策略3: 使用 ast.literal_eval
+                    try:
+                        return ast.literal_eval(json_text)
+                    except:
+                        print("ast.literal_eval 也失敗")
+                        
+                        # 策略4: 嘗試提取部分有效的 JSON
+                        try:
+                            # 尋找最長的連續 JSON 結構
+                            import re
+                            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+                            matches = re.findall(json_pattern, json_text)
+                            if matches:
+                                longest_match = max(matches, key=len)
+                                return json.loads(longest_match)
+                        except:
+                            pass
+                        
+                        # 如果所有策略都失敗，拋出原始錯誤
+                        raise e
+        
+        # 如果沒有找到 JSON 結構
+        raise ValueError("回應中沒有找到有效的 JSON 結構")
+        
+    except Exception as e:
+        print(f"JSON 解析完全失敗: {e}")
+        raise e
 
 def normalize_order_text_for_tts(text):
     """
@@ -1441,7 +1495,12 @@ def send_complete_order_notification(order_id, store_name=None):
                         break
         
         # 1. 生成中文語音檔（標準語速）
-        voice_result = generate_voice_order(order_id, 1.0)
+        voice_result = None
+        try:
+            voice_result = generate_voice_order(order_id, 1.0)
+        except Exception as e:
+            print(f"語音生成失敗，跳過語音發送: {e}")
+            voice_result = None
         
         # 2. 處理語音結果
         if voice_result and isinstance(voice_result, str) and os.path.exists(voice_result):
@@ -2481,7 +2540,7 @@ def generate_voice_order_fallback(order_id, speech_rate=1.0):
             menu_item = MenuItem.query.get(item.menu_item_id)
             if menu_item:
                 item_name = menu_item.item_name
-                quantity = item.quantity
+                quantity = item.quantity_small
                 
                 # 判斷是飲料還是餐點
                 if any(keyword in item_name for keyword in ['茶', '咖啡', '飲料', '果汁', '奶茶', '汽水', '可樂', '啤酒', '酒']):
