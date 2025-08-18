@@ -985,6 +985,8 @@ def translate_text_with_fallback(text, target_language='en'):
 
 def translate_menu_items_with_db_fallback(menu_items, target_language):
     """翻譯菜單項目，優先使用資料庫翻譯，失敗時使用 AI 翻譯"""
+    from ..models import MenuTranslation
+    
     translated_items = []
     
     # 語言碼正規化：支援 BCP47 格式

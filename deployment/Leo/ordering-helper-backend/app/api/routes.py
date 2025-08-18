@@ -967,7 +967,20 @@ def create_order():
                 
                 menu_item = MenuItem.query.get(menu_item_id)
                 if not menu_item:
-                    validation_errors.append(f"項目 {i+1}: 找不到菜單項目 ID {menu_item_id}")
+                    # 提供更詳細的錯誤訊息，包括可能的正確 ID
+                    print(f"❌ 找不到菜單項目 ID {menu_item_id}")
+                    
+                    # 嘗試找到相似的菜單項目
+                    similar_items = MenuItem.query.filter(
+                        MenuItem.item_name.like(f"%{item_data.get('item_name', '')}%")
+                    ).limit(5).all()
+                    
+                    error_msg = f"項目 {i+1}: 找不到菜單項目 ID {menu_item_id}"
+                    if similar_items:
+                        similar_ids = [str(item.menu_item_id) for item in similar_items]
+                        error_msg += f" (可能的正確 ID: {', '.join(similar_ids)})"
+                    
+                    validation_errors.append(error_msg)
                     continue
                 
                 subtotal = menu_item.price_small * quantity
@@ -990,10 +1003,20 @@ def create_order():
                 })
 
         if validation_errors:
+            print(f"❌ 訂單資料驗證失敗: {validation_errors}")
             return jsonify({
                 "error": "訂單資料驗證失敗",
                 "validation_errors": validation_errors,
-                "received_items": data['items']
+                "received_data": {
+                    "store_id": raw_store_id,
+                    "store_name": frontend_store_name,
+                    "items_count": len(data.get('items', [])),
+                    "items": data.get('items', [])
+                },
+                "debug_info": {
+                    "resolved_store_id": store_db_id,
+                    "user_id": user.user_id if user else None
+                }
             }), 400
 
         if not order_items_to_create:
@@ -1206,9 +1229,16 @@ def create_order():
             
         except Exception as e:
             db.session.rollback()
+            print(f"❌ 訂單建立失敗: {str(e)}")
             return jsonify({
                 "error": "訂單建立失敗",
-                "details": str(e)
+                "details": str(e),
+                "debug_info": {
+                    "store_id": store_db_id,
+                    "user_id": user.user_id if user else None,
+                    "items_count": len(order_items_to_create),
+                    "total_amount": total_amount
+                }
             }), 500
         
     except Exception as e:
