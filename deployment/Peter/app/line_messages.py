@@ -332,18 +332,18 @@ async def create_language_selection_flex_message(
     return FlexMessage(alt_text=prompt_text, contents=bubble)
 
 
-def create_liff_url(user: User, store: Store) -> str:
+def create_liff_url(user: User, store: Store, translated_store_name: str) -> str:
     """
     建立並返回一個 LIFF (LINE Front-end Framework) 應用程式的 URL。
     LIFF URL 允許在 LINE 內部開啟一個網頁視窗。
     """
-    # 對店家名稱進行 URL 編碼，以處理名稱中可能包含的特殊字元。
-    encoded_store_name = quote(store.store_name)
+    # 對傳入的翻譯後店名進行 URL 編碼。
+    encoded_store_name = quote(translated_store_name)
     # 判斷店家是否為合作夥伴。
     is_partner = "true" if store.partner_level > 0 else "false"
     # 取得使用者的偏好語言。
     user_lang = user.preferred_lang if user else "en"
-    # 組合 LIFF URL，並將店家 ID、名稱、合作狀態和語言等資訊作為查詢參數 (query parameters) 傳遞給 LIFF 網頁。
+    # 組合 LIFF URL...
     return f"line://app/{Config.LIFF_ID}?store_id={store.store_id}&store_name={encoded_store_name}&is_partner={is_partner}&lang={user_lang}"
 
 
@@ -482,7 +482,7 @@ async def create_store_carousel_message(
         translated_display_text = translated_dynamic[i * 2 + 1]
 
         # 產生點餐用的 LIFF URL。
-        liff_full_url = create_liff_url(user, store)
+        liff_full_url = create_liff_url(user, store, translated_store_name)
         # 設定卡片的預設圖片。
         card_photo_url = "https://via.placeholder.com/1024x1024.png?text=No+Image"
         # 如果店家資料中有主照片 URL...
@@ -606,11 +606,11 @@ async def create_order_history_carousel(
         # 定義卡片的兩個按鈕。
         actions = [
             PostbackAction(
-                label=view_details_label,
+                label=view_details_label[:20],
                 data=json.dumps(details_postback_data),
                 displayText=translated_display_text,
             ),
-            URIAction(label=order_again_label, uri=create_liff_url(user, store)),
+            URIAction(label=order_again_label[:20], uri=create_liff_url(user, store, translated_store_name)),
         ]
 
         # 建立輪播卡片。
