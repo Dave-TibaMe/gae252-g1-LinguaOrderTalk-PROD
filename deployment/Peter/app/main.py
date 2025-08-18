@@ -1,983 +1,647 @@
-import os
-import json
-import asyncio
-import logging
-from typing import List
-from urllib.parse import quote, parse_qs
+# 導入第三方函式庫
+import aiohttp  # 用於執行非同步 HTTP 請求
 
-import aiohttp
+# 導入標準函式庫
+import asyncio  # 用於執行非同步操作
+import io       # 用於處理記憶體中的二進位資料流，如此處的圖片
+import json     # 用於解析 JSON 資料
+import logging  # 用於日誌記錄
+import os       # 用於與作業系統互動，如此處讀取檔案路徑
 
+# 導入非同步上下文管理器工具
 from contextlib import asynccontextmanager
+# 導入型別提示
+from typing import Any, Dict, List
 
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from sqlalchemy import select, desc
-from sqlalchemy.orm import joinedload
-from sqlalchemy.ext.asyncio import AsyncSession
-
-# 匯入 LINE Bot 元件
-from linebot.v3 import WebhookParser
-from linebot.v3.exceptions import InvalidSignatureError
-from linebot.v3.messaging import (
-    AsyncApiClient, Configuration,
-    AsyncMessagingApi as MessagingApi,
-    AsyncMessagingApiBlob as MessagingApiBlob,
-    TextMessage, PushMessageRequest, ReplyMessageRequest,
-    TemplateMessage, CarouselTemplate, CarouselColumn,
-    QuickReply, QuickReplyItem, LocationAction,
-    URIAction, PostbackAction, ButtonsTemplate
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request # FastAPI 核心元件
+from fastapi.responses import StreamingResponse # 用於串流回傳圖片等大型檔案
+from linebot.v3 import WebhookParser # 用於解析 LINE webhook 事件
+from linebot.v3.exceptions import InvalidSignatureError # 簽章驗證失敗時的例外
+from linebot.v3.messaging import ( # LINE Messaging API 的核心元件
+    AsyncApiClient,
+    AsyncMessagingApi as MessagingApi, # 將 AsyncMessagingApi 重新命名為 MessagingApi 方便使用
+    Configuration,
+    Message,
+    PushMessageRequest,
+    ReplyMessageRequest,
+    TextMessage,
 )
-from linebot.v3.webhooks import (
-    MessageEvent, TextMessageContent, AudioMessageContent,
-    FollowEvent, LocationMessageContent, PostbackEvent,
-    StickerMessageContent
+from linebot.v3.webhooks import ( # LINE webhook 事件的各種模型
+    FollowEvent,
+    LocationMessageContent,
+    MessageEvent,
+    PostbackEvent,
+    StickerMessageContent,
+    TextMessageContent,
 )
+from sqlalchemy.ext.asyncio import AsyncSession # SQLAlchemy 的非同步會話
 
-# 匯入 Google 服務和本地模組
-from google.cloud import translate_v2 as translate
-from google.cloud import speech
+# 導入專案內部模組
+from . import clients, crud, line_messages # 導入客戶端初始化、資料庫操作、訊息產生模組
+from .config import Config # 導入設定檔
+from .constants import ActionType # 導入動作類型常數
+from .database import AsyncSessionLocal # 導入資料庫會話工廠
+from .dependencies import ( # 導入 FastAPI 依賴項
+    get_aiohttp_session,
+    get_lang_code_map,
+    get_language_display_texts,
+    get_native_language_list,
+    get_translate_client,
+)
+from .models import User # 導入使用者模型
+from .services import language_service, order_service, store_service, user_service # 導入所有服務層邏輯
 
-from app.config import Config
-from app.database import AsyncSessionLocal
-from app.models import User, Language, Store, Order, OrderItem
+# 取得 uvicorn 的錯誤日誌記錄器，讓此處的日誌與伺服器日誌整合
+logger = logging.getLogger("uvicorn.error")
 
-language_lookup_dict = {}
-LANG_CODE_MAP = {}
-LANGUAGE_LIST_STRING = ""
 
-# --- 【修改處】建立 Lifespan 管理員 ---
+def _check_critical_configs():
+    """在應用程式啟動時檢查所有必要的環境變數是否已設定。"""
+    # 定義一個字典，包含所有攸關系統運作的必要設定
+    critical_vars = {
+        "CHANNEL_ACCESS_TOKEN": Config.CHANNEL_ACCESS_TOKEN,
+        "CHANNEL_SECRET": Config.CHANNEL_SECRET,
+        "DATABASE_URL": Config.DATABASE_URL,
+        "MAPS_API_KEY": Config.MAPS_API_KEY,
+    }
+
+    # 找出所有未設定的變數名稱
+    missing_vars = [name for name, value in critical_vars.items() if not value]
+
+    # 如果有任何必要變數缺失
+    if missing_vars:
+        # 逐一記錄嚴重錯誤日誌
+        for var_name in missing_vars:
+            logger.critical(f"CRITICAL: Missing required environment variable: {var_name}")
+        
+        # 拋出 SystemExit 例外，直接終止應用程式啟動
+        raise SystemExit(
+            "Application startup failed due to missing critical environment variables."
+        )
+
+    # 如果所有必要變數都已設定，記錄一條參考訊息
+    logger.info("All critical environment variables are set.")
+
+    # 檢查可選設定 LIFF_ID，如果未設定則發出警告
+    if not Config.LIFF_ID:
+        logger.warning(
+            "Optional environment variable 'LIFF_ID' is not set. LIFF-related features will be unavailable."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 在應用程式啟動時執行
-    global LANGUAGE_LIST_STRING, LANG_CODE_MAP, language_lookup_dict # 宣告我們要修改的是全域變數
+    """
+    FastAPI 的生命週期管理器。
+    `yield` 之前的程式碼會在應用程式啟動時執行一次。
+    `yield` 之後的程式碼會在應用程式關閉時執行一次。
+    """
+    # --- 應用程式啟動 ---
+    
+    # 1. 檢查關鍵設定檔
+    _check_critical_configs()
 
-    # --- 1. 載入 language_lookup.json (從全域搬移至此) ---
-    try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(current_dir, 'static', 'data', 'languages_lookup.json')
-        with open(json_path, 'r', encoding='utf-8') as f:
-            language_list = json.load(f)
-        for item in language_list:
-            lang_code = item['lang_code']
-            for name in item['lang_name']:
-                language_lookup_dict[name.lower()] = lang_code
-        logging.info("成功載入並處理 language_lookup_dict。")
-    except Exception as e:
-        logging.warning(f"警告：載入 languages_lookup.json 失敗: {e}")
+    # 2. 初始化並儲存共用資源到 app.state 中
+    # `app.state` 是一個可以讓你在應用程式生命週期內儲存任意物件的地方
+    app.state.aiohttp_session = aiohttp.ClientSession()
+    logger.info("AIOHTTP ClientSession created.")
 
+    app.state.translate_client = clients.initialize_google_clients()
 
-    # --- 2. 從資料庫載入語言對照表 ---
-    logging.info("應用程式啟動中，正在從資料庫載入語言對照表...")
-    async with AsyncSessionLocal() as session:
+    logger.info("Application startup: Concurrently loading initial data...")
+
+    # 3. 同時（並行）載入需要的初始資料，以加速啟動
+    
+    # 定義一個同步函式來讀取本地 JSON 檔案
+    def load_native_languages_sync():
         try:
-            result = await session.execute(select(Language))
-            languages = result.scalars().all()
-            for lang in languages:
-                LANG_CODE_MAP[lang.line_lang_code] = {
-                    "translation": lang.translation_lang_code,
-                    "stt": lang.stt_lang_code
-                }
-            logging.info(f"成功載入 {len(LANG_CODE_MAP)} 筆語言對照資料。")
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            json_path = os.path.join(
+                current_dir, "static", "data", "language_list_native.json"
+            )
+            with open(json_path, "r", encoding="utf-8") as f:
+                return json.load(f)
         except Exception as e:
-            logging.error(f"從資料庫載入語言對照表失敗: {e}")
+            logger.warning(f"Failed to load language_list_native.json: {e}")
+            return []
 
-    # --- 3. 讀取並格式化原生語言列表 JSON ---
-    try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(current_dir, 'static', 'data', 'language_list_native.json')
-        with open(json_path, 'r', encoding='utf-8') as f:
-            native_languages = json.load(f)
-        lang_items = []
-        for item in native_languages:
-            native_name = item['lang_name'][0]
-            lang_items.append(f"{native_name}")
-        LANGUAGE_LIST_STRING = "\n".join(lang_items)
-        logging.info("成功載入並格式化原生語言列表。")
-    except Exception as e:
-        logging.warning(f"警告：載入 language_list_native.json 失敗: {e}")
-        LANGUAGE_LIST_STRING = ""
+    # 使用 `asyncio.to_thread` 將同步的檔案讀取操作放到背景執行緒，避免阻塞事件循環
+    load_languages_task = asyncio.to_thread(load_native_languages_sync)
 
+    # 定義一個非同步函式來從資料庫讀取語言映射
+    async def load_db_mappings():
+        lang_map = {}
+        async with AsyncSessionLocal() as session:
+            try:
+                languages = await crud.get_all_languages(session)
+                for lang in languages:
+                    lang_map[lang.line_lang_code] = {
+                        "translation": lang.translation_lang_code,
+                        "stt": lang.stt_lang_code,
+                    }
+                logger.info(f"Successfully loaded {len(lang_map)} language mappings from DB.")
+            except Exception as e:
+                logger.error(f"Failed to load language mappings from DB: {e}")
+        return lang_map
+
+    # 使用 `asyncio.gather` 來同時執行讀取資料庫和讀取檔案這兩個任務
+    results = await asyncio.gather(load_db_mappings(), load_languages_task)
+
+    # 將載入的結果存入 app.state
+    app.state.lang_code_map = results[0]
+    app.state.native_language_list = results[1]
+
+    # 4. 預先翻譯並快取語言選單中會用到的顯示文字，提升後續回應速度
+    logger.info("Pre-translating language display texts...")
+    app.state.language_display_texts = {}
+    if app.state.translate_client:
+        tasks = []
+        for lang_item in app.state.native_language_list:
+            lang_code = lang_item["lang_code"]
+            lang_name = lang_item["lang_name"][0]
+            # 為每種語言建立一個翻譯任務
+            task = line_messages.get_translated_text_for_target_lang(
+                template_key="setting_language_to",
+                target_line_lang_code=lang_code,
+                translate_client=app.state.translate_client,
+                lang_code_map=app.state.lang_code_map,
+                lang_name=lang_name,
+            )
+            tasks.append((lang_code, task))
+
+        # 使用 `asyncio.gather` 同時執行所有翻譯任務
+        translated_results = await asyncio.gather(*[t[1] for t in tasks])
+        
+        # 將翻譯結果存入快取字典
+        for i, (lang_code, _) in enumerate(tasks):
+            app.state.language_display_texts[lang_code] = translated_results[i]
+
+        logger.info(
+            f"Successfully cached {len(app.state.language_display_texts)} language display texts."
+        )
+    else:
+        logger.warning(
+            "Translate client not available. Skipping pre-translation of display texts."
+        )
+    
+    logger.info("Successfully loaded and formatted initial data into app.state.")
+
+    # `yield` 關鍵字：到此，啟動程序完成。FastAPI 開始接收請求。
     yield
 
-    logging.info("應用程式正在關閉...")
+    # --- 應用程式關閉 ---
+    # `yield` 之後的程式碼在應用程式收到關閉信號時執行
+    await app.state.aiohttp_session.close()
+    logger.info("AIOHTTP ClientSession closed.")
+    logger.info("Application shutdown.")
 
-# --- 初始化應用程式與服務 ---
-logging.basicConfig(level=logging.INFO)
+
+# 建立 FastAPI 應用程式實例，並傳入生命週期管理器
 app = FastAPI(title="LinguaOrderTalk Bot Service", lifespan=lifespan)
-
+# 使用設定檔中的 Access Token 初始化 LINE SDK 的設定
 line_config = Configuration(access_token=Config.CHANNEL_ACCESS_TOKEN)
+# 使用設定檔中的 Channel Secret 初始化 webhook 解析器，用於驗證簽章
 parser = WebhookParser(Config.CHANNEL_SECRET)
 
-translate_client = translate.Client()
-speech_client = speech.SpeechClient()
 
-# --- 回覆訊息樣板 ---
-REPLY_TEMPLATES = {
-    "welcome_text_message": "您可以透過下方的按鈕開始使用我們的服務，或隨時輸入文字與我互動。",
-    "button_card_prompt": "請選擇服務項目：",
-    "button_label_change_language": "更改語言",
-    "button_label_order_now": "立即點餐",
-    "button_label_order_history": "歷史訂單",
-    "ask_language": "請直接說出或輸入您想設定的語言。(輸入 0 可取消)",
-    "language_set_success": "語言已成功設定為: {lang_name}。",
-    "language_not_recognized": "對不起，無法識別您輸入的語言，請再試一次。(輸入 0 可取消)",
-    "user_not_found": "錯誤：找不到您的使用者資料，請嘗試重新加入好友。",
-    "audio_processing_error": "處理錄音時發生錯誤，請稍後再試。(輸入 0 可取消)",
-    "audio_not_recognized": "對不起，我聽不清楚您說的內容，請再試一次。(輸入 0 可取消)",
-    "ask_location": "請分享您目前的位置，為您尋找附近的店家。(輸入 0 可取消)",
-    "no_stores_found": "對不起，您附近找不到任何店家。",
-    "reprompt_location": "請點擊下方的按鈕來分享您的位置。(輸入 0 可取消)",
-    "start_ordering": "開始點餐",
-    "order_again": "再次訂購",
-    "view_order_details": "查看訂單詳情",
-    "no_order_history": "您目前沒有任何歷史訂單。",
-    "order_details_title": "訂單詳情",
-    "order_details_store": "店家",
-    "order_details_time": "時間",
-    "order_details_total": "總金額",
-    "order_details_items_header": "品項",
-    "generic_error": "處理您的請求時發生錯誤，請稍後再試。",
-    "querying_order_details": "正在查詢 {store_name} 的訂單詳情...",
-    "operation_cancelled": "好的，已取消操作。請問還有什麼可以為您服務的嗎？",
-    "partner_level_0": "非合作店家",
-    "partner_level_1": "合作店家",
-    "partner_level_2": "VIP店家"
-}
-
-async def translate_arbitrary_text(user: User, text_to_translate: str, source_lang: str = 'zh-TW') -> str:
+@app.get("/api/v1/places/photo/{photo_name:path}")
+async def get_google_place_photo(
+    photo_name: str, aiohttp_session: aiohttp.ClientSession = Depends(get_aiohttp_session)
+):
     """
-    根據使用者偏好語言，翻譯任意指定的文字。
-    如果翻譯失敗或無需翻譯，則回傳原始文字。
+    一個代理 API 端點，用於安全地取得 Google Place 的照片。
+    `photo_name` 是一個路徑參數，可以包含斜線 (`/`)。
+    這個端點的作用是隱藏後端的 Google MAPS_API_KEY，不讓它暴露在前端。
     """
-    # 如果沒有提供文字、使用者或其偏好語言，直接回傳原文
-    if not text_to_translate or not user or not user.preferred_lang:
-        return text_to_translate
+    # 檢查 API 金鑰是否存在
+    if not Config.MAPS_API_KEY:
+        logger.error("MAPS_API_KEY is not configured. Cannot proxy photo request.")
+        raise HTTPException(status_code=500, detail="Server configuration error.")
 
-    # 從全域對照表中找到 Google Translate API 需要的目標語言代碼
-    lang_map = LANG_CODE_MAP.get(user.preferred_lang)
-    target_lang = "" # 初始化為空字串
-    if lang_map and lang_map.get("translation"):
-        target_lang = lang_map["translation"]
-    else:
-        # 如果在對照表中找不到，則直接使用 user.preferred_lang
-        target_lang = user.preferred_lang
-
-    # 如果目標語言與來源語言相同，則無需呼叫 API，直接回傳原文以節省資源
-    # (例如，用戶設定為繁體中文，店家名稱也是繁體中文)
-    if target_lang == source_lang:
-        return text_to_translate
+    # 組合 Google Places Photo API 的實際 URL
+    google_photo_url = (
+        f"https://places.googleapis.com/v1/{photo_name}/media"
+        f"?maxHeightPx=1024&key={Config.MAPS_API_KEY}"
+    )
 
     try:
-        # 執行緒中安全地呼叫同步的翻譯 API
-        result = await asyncio.to_thread(
-            translate_client.translate,
-            text_to_translate,
-            target_language=target_lang,
-            source_language=source_lang # 明確指定來源語言以提高準確度
+        # 使用共用的 aiohttp session 發送 GET 請求到 Google
+        async with aiohttp_session.get(google_photo_url) as response:
+            # 如果 Google 回應錯誤狀態碼，則拋出例外
+            response.raise_for_status()
+
+            # 取得回應的內容類型 (e.g., 'image/jpeg')
+            content_type = response.headers.get("Content-Type")
+
+            # 讀取圖片的二進位內容
+            content = await response.read()
+            # 使用 StreamingResponse 將圖片內容串流回傳給客戶端，這樣更有效率
+            return StreamingResponse(io.BytesIO(content), media_type=content_type)
+
+    except aiohttp.ClientError as e:
+        # 如果請求失敗，記錄錯誤並回傳 502 Bad Gateway 錯誤
+        logger.error(f"Failed to fetch photo from Google Places API. Error: {e}")
+        raise HTTPException(
+            status_code=502, detail="Failed to retrieve image from upstream service."
         )
-        # 回傳翻譯後的文字
-        return result['translatedText']
 
-    except Exception as e:
-        # 如果 API 呼叫失敗，記錄錯誤並安全地回傳原始文字
-        logging.error(f"Arbitrary translation of '{text_to_translate}' to {target_lang} failed: {e}")
-        return text_to_translate
 
-# --- 翻譯輔助函式 (異步) ---
-async def get_translated_text(user: User, template_key: str, **kwargs) -> str:
-    """
-    根據使用者偏好語言，取得翻譯後的文字。
-    """
-    default_text = REPLY_TEMPLATES.get(template_key, "Message template undefined.")
-
-    # 如果找不到使用者或其偏好語言，直接回傳預設文字
-    if not user or not user.preferred_lang:
-        return default_text.format(**kwargs)
-        
-    # 從記憶體的對照表中，找到對應的 translation_lang_code
-    lang_map = LANG_CODE_MAP.get(user.preferred_lang)
-    target_lang = ""
-    if lang_map and lang_map.get("translation"):
-        target_lang = lang_map["translation"]
-    else:
-        # 如果在對照表中找不到，則退回使用原始的 preferred_lang
-        target_lang = user.preferred_lang
-
-    # 如果目標語言我們預設樣板的語言，則無需呼叫 API，直接回傳原文以節省資源
-    if target_lang == 'zh-TW':
-        return default_text.format(**kwargs)
-
-    try:
-        # 呼叫翻譯 API
-        result = await asyncio.to_thread(
-            translate_client.translate,
-            default_text,
-            target_language=target_lang,
-            source_language='zh-TW'
-        )
-        translated_text = result['translatedText']
-        return translated_text.format(**kwargs)
-    
-    except Exception as e:
-        logging.error(f"Translation to {target_lang} for key '{template_key}' failed: {e}")
-        # 若翻譯失敗，安全地退回到預設文字
-        return default_text.format(**kwargs)
-
-async def localize_lang_name(canonical_name: str, target_lang: str) -> str:
-    if target_lang != 'zh-Hant': # 假設標準名稱都是中文
-        try:
-            result = await asyncio.to_thread(
-                translate_client.translate,
-                canonical_name, 
-                target_language=target_lang,
-                source_language='zh-TW'
-            )
-            return result['translatedText']
-        except Exception as e:
-            logging.error(f"Failed to localize lang_name '{canonical_name}' to {target_lang}: {e}")
-    return canonical_name
-
-# 【新功能】建立主選單訊息列表的輔助函式
-async def get_main_menu_messages(user: User) -> list:
-    """
-    建立並回傳一個包含主要引導文字和主選單按鈕的訊息列表。
-    """
-    # 1. 準備第一則訊息：純文字說明
-    welcome_text = await get_translated_text(user, "welcome_text_message")
-    text_message = TextMessage(text=welcome_text)
-
-    # 2. 準備第二則訊息：按鈕卡片
-    translated_texts = await asyncio.gather(
-        get_translated_text(user, "button_card_prompt"), # 極簡提示文字
-        get_translated_text(user, "button_label_order_now"),
-        get_translated_text(user, "button_label_order_history"),
-        get_translated_text(user, "button_label_change_language"),
-    )
-    prompt_text, order_now_label, history_label, change_lang_label = translated_texts
-
-    buttons_template = ButtonsTemplate(
-        # 這裡的 text 使用我們新的極簡提示文字
-        text=prompt_text,
-        actions=[
-            PostbackAction(label=order_now_label, data="action=order_now"),
-            PostbackAction(label=history_label, data="action=order_history"),
-            PostbackAction(label=change_lang_label, data="action=change_language"),
-        ]
-    )
-    template_message = TemplateMessage(alt_text=prompt_text, template=buttons_template)
-
-    # 回傳包含兩則訊息的列表
-    return [text_message, template_message]
-
-def create_liff_url(user: User, store: Store) -> str:
-    """
-    根據使用者和店家物件，產生一個標準化的 LIFF 啟動 URL。
-    包含了所有必要的查詢參數，並對店名進行 URL 編碼。
-    """
-    liff_id = Config.LIFF_ID
-    # 對店家名稱進行 URL 編碼，避免中文或特殊符號造成網址錯誤
-    encoded_store_name = quote(store.store_name)
-    is_partner = 'true' if store.partner_level > 0 else 'false'
-    
-    # 【新增】取得使用者的偏好語言
-    user_lang = user.preferred_lang if user else 'en' # 加上保護，以防 user 物件不存在
-
-    # 【修改】在 URL 中附加上 lang 參數
-    return f"line://app/{liff_id}?store_id={store.store_id}&store_name={encoded_store_name}&is_partner={is_partner}&lang={user_lang}"
-
-# --- Webhook 主路由 ---
 @app.post("/callback")
-async def callback(request: Request, background_tasks: BackgroundTasks):
-    signature = request.headers.get('X-Line-Signature', '')
+async def callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    # 以下都是透過 FastAPI 的依賴注入系統，從 `dependencies.py` 取得的共用資源
+    aiohttp_session: aiohttp.ClientSession = Depends(get_aiohttp_session),
+    translate_client=Depends(get_translate_client),
+    lang_code_map: Dict[str, Any] = Depends(get_lang_code_map),
+    native_language_list: List[Dict[str, Any]] = Depends(get_native_language_list),
+    language_display_texts: Dict[str, str] = Depends(get_language_display_texts),
+):
+    """
+    接收 LINE 平台 webhook 事件的主要端點。
+    """
+    # 從請求標頭中取得 LINE 的簽章
+    signature = request.headers.get("X-Line-Signature", "")
+    # 取得請求的原始內容 (body)
     body = await request.body()
     try:
-        events = parser.parse(body.decode('utf-8'), signature)
+        # 使用 parser 驗證簽章並解析事件內容
+        events = parser.parse(body.decode("utf-8"), signature)
     except InvalidSignatureError:
+        # 如果簽章無效，回傳 400 錯誤
         raise HTTPException(status_code=400, detail="Invalid signature")
-    
-    background_tasks.add_task(handle_events, events=events)
-    return 'OK'
 
-# --- 事件處理總管 ---
-async def handle_events(events: List):
+    # 遍歷所有解析出來的事件
+    for event in events:
+        # 對於每一個事件，將其處理邏輯 `handle_single_event_task` 作為一個背景任務加入。
+        # FastAPI 會在回傳 `200 OK` 給 LINE 平台之後，才在背景執行這些任務。
+        # 這是處理 LINE webhook 的標準做法，可以避免因處理時間過長導致 LINE 平台認為請求失敗。
+        background_tasks.add_task(
+            handle_single_event_task,
+            event=event,
+            aiohttp_session=aiohttp_session,
+            translate_client=translate_client,
+            lang_code_map=lang_code_map,
+            native_language_list=native_language_list,
+            language_display_texts=language_display_texts,
+        )
+    # 立即回傳 "OK"，表示已成功接收到事件
+    return "OK"
+
+
+async def handle_single_event_task(
+    event,
+    aiohttp_session: aiohttp.ClientSession,
+    translate_client,
+    lang_code_map: dict,
+    native_language_list: list,
+    language_display_texts: dict,
+):
     """
-    為背景任務建立一個獨立的資料庫 session。
+    在背景執行的單一事件處理函式。
     """
-    async with AsyncSessionLocal() as session:
-        for event in events:
-            if isinstance(event, FollowEvent):
-                await handle_follow(event, session)
-            elif isinstance(event, MessageEvent):
-                if isinstance(event.message, TextMessageContent):
-                    await handle_message(event, session)
-                elif isinstance(event.message, AudioMessageContent):
-                    await handle_audio_message(event, session)
-                elif isinstance(event.message, LocationMessageContent):
-                    await handle_location_message(event, session)
-                elif isinstance(event.message, StickerMessageContent):
-                    await handle_sticker_message(event, session)
-            elif isinstance(event, PostbackEvent):
-                await handle_postback(event, session)
+    # 建立一個非同步資料庫會話，使用 `async with` 確保會話在使用後能被正確關閉。
+    async with AsyncSessionLocal() as db:
 
-# --- 【核心修改】事件處理器：處理使用者加入好友 ---
-async def handle_follow(event: FollowEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    logging.info(f"User {line_user_id} has followed our bot.")
-    
-    # 預設語言為英文，以防 API 呼叫失敗或沒有回傳語言
-    user_language = 'en'
-
-    # 呼叫 Get Profile API 來取得使用者語言
-    try:
-        async with AsyncApiClient(line_config) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            profile = await line_bot_api.get_profile(line_user_id)
-            
-            if profile.language:
-                user_language = profile.language
-                logging.info(f"Detected user language from profile: {user_language}")
-
-    except Exception as e:
-        logging.error(f"Failed to get user profile for {line_user_id}: {e}")
-        # 如果 API 呼叫失敗，我們會繼續使用預設的 'en'
-
-    # 查詢使用者是否存在
-    result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        # 使用從 API 取得的語言 (或預設的 'en') 來建立新使用者
-        user = User(
-            line_user_id=line_user_id, 
-            preferred_lang=user_language, 
-            state='normal'
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user) # 取得剛寫入的 user 物件，確保後續 get_translated_text 能使用
-        logging.info(f"New user {line_user_id} has been added with lang: {user_language}.")
-    else:
-        # 如果使用者已存在，也更新他的語言設定
-        user.preferred_lang = user_language
-        await db.commit()
-        logging.info(f"Updated user {line_user_id}'s language to: {user_language}.")
-    
-    # 呼叫新的函式來取得訊息列表
-    welcome_messages = await get_main_menu_messages(user)
-    
-    # 主動推送按鈕卡片訊息
-    async with AsyncApiClient(line_config) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        await line_bot_api.push_message(
-            PushMessageRequest(to=line_user_id, messages=welcome_messages)
-        )
-
-# --- 【核心修改】修改 handle_message 以處理多訊息回覆 ---
-async def handle_message(event: MessageEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    user_text = event.message.text
-    
-    # process_language_text 現在會回傳一個訊息物件的列表
-    reply_messages = await process_language_text(line_user_id, user_text, db)
-    
-    async with AsyncApiClient(line_config) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        # 直接使用回傳的訊息物件列表
-        await line_bot_api.reply_message(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
-        )
-
-async def handle_audio_message(event: MessageEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        error_text = await get_translated_text(None, "user_not_found")
-        reply_messages = [TextMessage(text=error_text)] # 確保是列表
-
-    # --- 【核心修改】只有在等待語言輸入的狀態下，才處理語音 ---
-    elif user.state == 'awaiting_language':
-        message_id = event.message.id
-        logging.info(f"Processing audio message from {line_user_id} in state 'awaiting_language'")
-
-         # 1. 從 LANG_CODE_MAP 查找對應的 stt_lang_code
-        primary_stt_code = "en-US" # 預設的主要辨識語言
-        if user.preferred_lang:
-            lang_map = LANG_CODE_MAP.get(user.preferred_lang)
-            if lang_map and lang_map.get("stt"):
-                primary_stt_code = lang_map["stt"]
-        
-        # 2. 準備您指定的備選語言列表
-        alternative_codes = [
-            'cmn-Hant-TW', 'cmn-Hans-CN', 'tr-TR', 'ja-JP', 'id-ID', 
-            'es-ES', 'es-MX', 'fr-FR', 'ar-AE', 'ru-RU', 'en-US', 
-            'th-TH', 'ms-MY', 'vi-VN', 'it-IT', 'pt-BR', 'pt-PT', 
-            'de-DE', 'ko-KR'
-        ]
-        # 確保主要語言不會重複出現在備選列表中
-        if primary_stt_code in alternative_codes:
-            alternative_codes.remove(primary_stt_code)
-
-        logging.info(f"Setting STT primary language to: {primary_stt_code}")
-
-        reply_messages = []
-
-        try:
-            async with AsyncApiClient(line_config) as api_client:
-                line_bot_blob_api = MessagingApiBlob(api_client)
-                audio_content = await line_bot_blob_api.get_message_content(message_id=message_id)
-
-            audio = speech.RecognitionAudio(content=audio_content)
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.MP3,
-                sample_rate_hertz=16000,
-                language_code=primary_stt_code, # 使用從資料庫查出的 stt code
-                alternative_language_codes=alternative_codes # 使用您指定的備選列表
-            )
-            response = await asyncio.to_thread(speech_client.recognize, config=config, audio=audio)
-            
-            if response.results and response.results[0].alternatives:
-                transcript = response.results[0].alternatives[0].transcript
-                logging.info(f"Speech-to-Text transcript: {transcript}")
-                reply_messages = await process_language_text(line_user_id, transcript, db)
-            else:
-                logging.warning("Speech-to-Text API returned no result.")
-                error_text = await get_translated_text(user, "audio_not_recognized")
-                messages_to_reply = [TextMessage(text=error_text)]
-                # 附上語言列表
-                if LANGUAGE_LIST_STRING:
-                    messages_to_reply.append(TextMessage(text=LANGUAGE_LIST_STRING))
-                reply_messages = messages_to_reply
-        except Exception as e:
-            logging.error(f"Error processing audio message: {e}")
-            error_text = await get_translated_text(user, "audio_processing_error")
-            reply_messages = [TextMessage(text=error_text)]
-    
-    else: # user.state is 'normal' or 'awaiting_location'
-        logging.info(f"Received unexpected audio from user {line_user_id} in state '{user.state}'")
-        reply_messages = await process_language_text(line_user_id, "", db)
-
-    # 回覆訊息給使用者
-    async with AsyncApiClient(line_config) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        await line_bot_api.reply_message(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
-        )
-
-# --- 處理貼圖訊息的事件處理器 ---
-async def handle_sticker_message(event: MessageEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        error_text = await get_translated_text(None, "user_not_found")
-        reply_messages = [TextMessage(text=error_text)] # 確保是列表
-
-    logging.info(f"Received unexpected sticker from user {line_user_id} in state '{user.state}'")
-    reply_messages = await process_language_text(line_user_id, "", db)
-
-    async with AsyncApiClient(line_config) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        await line_bot_api.reply_message(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
-        )
-
-# --- 處理位置訊息的事件處理器 ---
-async def handle_location_message(event: MessageEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    
-    result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = result.scalar_one_or_none()
-
-    if not user:
-        error_text = await get_translated_text(None, "user_not_found")
-        reply_messages = [TextMessage(text=error_text)] # 確保是列表
-
-    # 2. 只有在使用者處於 'awaiting_location' 狀態時才處理位置
-    elif user.state == 'awaiting_location':
-
-        # 將狀態改回正常
-        user.state = 'normal'
-        await db.commit()
-        
-        # 2. 取得位置訊息的所有資訊
-        location_message = event.message
-        user_lat = location_message.latitude
-        user_lng = location_message.longitude
-        title = location_message.title
-        address = location_message.address
-        
-        final_places = []
-
-        # --- 3. 【核心修改】採用混合 API 策略 ---
-        
-        # 步驟 B (探索): 先執行 Nearby Search 取得背景列表
-        logging.info(f"Executing Nearby Search for user {line_user_id}...")
-        nearby_search_url = "https://places.googleapis.com/v1/places:searchNearby"
-        nearby_headers = {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": Config.MAPS_API_KEY,
-            "X-Goog-FieldMask": "places.displayName,places.id,places.photos,places.location"
-        }
-        nearby_payload = {
-            "includedPrimaryTypes": ["restaurant"],
-            "maxResultCount": 10,
-            "locationRestriction": {
-                "circle": {"center": { "latitude": user_lat, "longitude": user_lng }, "radius": 200.0}
-            },
-            "rankPreference": "POPULARITY",
-            "languageCode": "zh-TW"
-        }
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(nearby_search_url, headers=nearby_headers, json=nearby_payload) as response:
-                    response.raise_for_status()
-                    nearby_result = await response.json()
-                    final_places = nearby_result.get("places", [])
-        except Exception as e:
-            logging.error(f"Google Nearby Search API error: {e}")
-            # 如果 Nearby Search 失敗，至少也要嘗試 Text Search
-            pass
-
-        if title and address:
-            # 情境一：使用者分享的是「地標」，執行步驟 A (驗證)
-            logging.info(f"Executing Text Search for landmark: '{title}'")
-            text_search_url = "https://places.googleapis.com/v1/places:searchText"
-            text_headers = {
-                "Content-Type": "application/json",
-                "X-Goog-Api-Key": Config.MAPS_API_KEY,
-                "X-Goog-FieldMask": "places.id,places.displayName,places.photos,places.types,places.location"
-            }
-            text_payload = {
-                "textQuery": f"{title} {address}",
-                "maxResultCount": 1,
-                "locationBias": {
-                    "circle": {"center": { "latitude": user_lat, "longitude": user_lng }, "radius": 50.0} # 縮小偏差半徑以求精準
-                },
-                "languageCode": "zh-TW"
-            }
+        # 定義一個巢狀函式，用於在發生未知錯誤時，嘗試發送一則通用的錯誤訊息給使用者。
+        async def _send_error_reply(event):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(text_search_url, headers=text_headers, json=text_payload) as response:
-                        response.raise_for_status()
-                        text_result = await response.json()
-                        landmark_place = text_result.get("places", [None])[0]
-                        
-                        # 步驟 C (組合): 如果驗證的地標是餐廳，就把它放到列表最前面
-                        if landmark_place and "restaurant" in landmark_place.get('types', []):
-                            logging.info(f"Landmark is a restaurant, prepending to the list.")
-                            # 移除 Nearby Search 結果中可能重複的地標
-                            final_places = [p for p in final_places if p.get('id') != landmark_place.get('id')]
-                            # 將地標插入到最前面
-                            final_places.insert(0, landmark_place)
-            except Exception as e:
-                logging.error(f"Google Text Search API error: {e}")
-                # Text Search 失敗不影響 Nearby Search 的結果
-
-        if not final_places:
-            not_found_text = await get_translated_text(user, "no_stores_found")
-            async with AsyncApiClient(line_config) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                await line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=not_found_text)]))
-            return
-
-        # 處理搜尋結果並建立輪播卡片
-        carousel_columns = []
-
-        for place in final_places[:10]:
-            place_id = place.get('id')
-            
-            # 步驟 A：用 place_id 檢查店家是否已在我們的資料庫中
-            store_result = await db.execute(select(Store).filter_by(place_id=place_id))
-            store_in_db = store_result.scalar_one_or_none()
-
-            # 步驟 B：如果店家不在資料庫中，就新增它
-            if not store_in_db:
-                logging.info(f"Store with place_id {place_id} not found in DB. Creating new entry.")
-                
-                # 從 Google API 的回傳中組合新店家的資料
-                new_store_name = place.get('displayName', {}).get('text', 'N/A')
-                new_photo_url = "https://via.placeholder.com/1024x1024.png?text=No+Image"
-                if place.get('photos'):
-                    photo_name = place['photos'][0]['name']
-                    new_photo_url = f"https://places.googleapis.com/v1/{photo_name}/media?maxHeightPx=1024&key={Config.MAPS_API_KEY}"
-
-                new_store = Store(
-                    store_name=new_store_name,
-                    partner_level=0, # 預設為 0 (非合作店家)
-                    gps_lat=place.get('location', {}).get('latitude'),
-                    gps_lng=place.get('location', {}).get('longitude'),
-                    place_id=place_id,
-                    main_photo_url=new_photo_url
-                    # created_at 和 store_id 會由資料庫自動產生
+                # 建立錯誤訊息物件
+                error_message = await line_messages.create_simple_text_message(
+                    user=None, # 此時可能還不知道 user 物件
+                    template_key="generic_error",
+                    translate_client=translate_client,
+                    lang_code_map=lang_code_map,
                 )
-                db.add(new_store)
-                await db.commit()
-                # 【重要】新增後，重新整理物件以取得自動增長的 store_id
-                await db.refresh(new_store)
-                # 將剛新增的物件賦值給 store_in_db，以便後續使用
-                store_in_db = new_store
-                logging.info(f"Successfully added new store: {new_store_name}")
+                async with AsyncApiClient(line_config) as api_client:
+                    messaging_api = MessagingApi(api_client)
+                    # 如果事件有 reply_token，就用 replyMessage
+                    if hasattr(event, "reply_token") and event.reply_token:
+                        await messaging_api.reply_message(
+                            ReplyMessageRequest(
+                                reply_token=event.reply_token, messages=[error_message]
+                            )
+                        )
+                    # 否則，如果能取得 user_id，就用 pushMessage
+                    elif hasattr(event, "source") and hasattr(event.source, "user_id"):
+                        await messaging_api.push_message(
+                            PushMessageRequest(
+                                to=event.source.user_id, messages=[error_message]
+                            )
+                        )
+            except Exception as e:
+                logger.error(f"Failed to send error message to user: {e}")
 
-            # 【修正】傳入 user 和 store_in_db 兩個物件
-            liff_full_url = create_liff_url(user, store_in_db)
+        # 使用一個大的 try...except 區塊來捕捉處理過程中所有的可能錯誤
+        try:
+            # --- 事件路由邏輯 ---
+            # 判斷事件類型
+            if isinstance(event, FollowEvent):
+                # 如果是使用者加入好友或解除封鎖事件
+                await user_service.handle_new_user_follow(
+                    db, event.source.user_id, translate_client, lang_code_map
+                )
+                return # 處理完畢，直接返回
 
-            # 步驟 C：建立輪播卡片 (現在 store_in_db 必定有值)
-            # 確保店名非空，並先存成原始店名
-            original_store_name = store_in_db.store_name if store_in_db else "店家名稱不詳"
-            
-            # --- 【修改處】呼叫新的翻譯函式來翻譯店名 ---
-            #translated_store_name = await translate_arbitrary_text(user, original_store_name, source_lang='zh-TW')
-            
-            # 確保照片 URL 永遠有有效的 URL
-            card_photo_url = store_in_db.main_photo_url if store_in_db and store_in_db.main_photo_url else "https://via.placeholder.com/1024x1024.png?text=No+Image"
-            
-            # --- 【修改處】組合包含 partner_level 的狀態文字 ---
-            partner_level = store_in_db.partner_level if store_in_db else 0
-            
-            # 組合出對應的樣板鍵，例如 "partner_level_0", "partner_level_1"
-            status_template_key = f"partner_level_{partner_level}"
-            
-            # 使用 get_translated_text 進行翻譯
-            translated_status = await get_translated_text(user, status_template_key)
-            
-            final_card_text = f"{translated_status}"
+            elif isinstance(event, MessageEvent):
+                # 如果是訊息事件
+                user = await crud.get_user_by_line_id(db, event.source.user_id)
+                if not user:
+                    # 如果在資料庫找不到使用者，準備一則 "user not found" 訊息
+                    reply_messages = [
+                        await line_messages.create_simple_text_message(
+                            None,
+                            "user_not_found",
+                            translate_client=translate_client,
+                            lang_code_map=lang_code_map,
+                        )
+                    ]
+                else:
+                    # 根據訊息的具體內容類型，分派到不同的處理器
+                    if isinstance(event.message, TextMessageContent):
+                        # 文字訊息
+                        reply_messages = await process_text_command(
+                            user,
+                            event.message.text,
+                            db,
+                            translate_client,
+                            lang_code_map,
+                            native_language_list,
+                            language_display_texts,
+                        )
+                    elif isinstance(event.message, LocationMessageContent):
+                        # 位置訊息
+                        reply_messages = await handle_location_message(
+                            event, user, db, aiohttp_session, translate_client, lang_code_map
+                        )
+                    elif isinstance(event.message, StickerMessageContent):
+                        # 貼圖訊息，當作未知指令處理，回傳主選單
+                        reply_messages = await user_service.handle_unknown_command(
+                            user, translate_client, lang_code_map
+                        )
 
-            # --- 【新增邏輯】翻譯按鈕標籤 ---
-            translated_action_label = await get_translated_text(user, "start_ordering")
+            elif isinstance(event, PostbackEvent):
+                # 如果是 Postback 事件（使用者點擊了 PostbackAction 按鈕）
+                user = await crud.get_user_by_line_id(db, event.source.user_id)
+                if not user:
+                    reply_messages = [
+                        await line_messages.create_simple_text_message(
+                            None,
+                            "user_not_found",
+                            translate_client=translate_client,
+                            lang_code_map=lang_code_map,
+                        )
+                    ]
+                else:
+                    reply_messages = await handle_postback(
+                        event,
+                        user,
+                        db,
+                        translate_client,
+                        lang_code_map,
+                        native_language_list,
+                        language_display_texts,
+                    )
 
-            # 步驟 C：建立輪播卡片
-            column = CarouselColumn(
-                thumbnail_image_url=card_photo_url,
-                title=original_store_name[:40], # 標題最多40字元
-                text=final_card_text[:60], # 內文最多60字元
-                actions=[
-                    URIAction(
-                        label=translated_action_label[:20], # <-- 使用翻譯後的文字 (標籤上限20字元)
-                        uri=liff_full_url # <-- 使用我們新組合的、包含所有參數的網址
+            else:
+                # 如果是其他未處理的事件類型，直接返回
+                return
+
+            # 如果前面邏輯產生了需要回覆的訊息 (`reply_messages`)
+            async with AsyncApiClient(line_config) as api_client:
+                # 呼叫 LINE API 的 replyMessage 方法來回覆訊息
+                await MessagingApi(api_client).reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token, messages=reply_messages
+                    )
+                )
+
+        except Exception as e:
+            # 如果在整個處理過程中發生任何未被捕獲的例外
+            user_id = (
+                event.source.user_id
+                if hasattr(event, "source") and hasattr(event.source, "user_id")
+                else "N/A"
+            )
+            # 記錄詳細的錯誤日誌，包括錯誤資訊和堆疊追蹤
+            logger.error(
+                f"Error processing event for user {user_id}: {event}", exc_info=True
+            )
+            # 嘗試發送通用錯誤訊息給使用者
+            await _send_error_reply(event)
+
+
+async def handle_location_message(
+    event: MessageEvent,
+    user: User,
+    db: AsyncSession,
+    aiohttp_session: aiohttp.ClientSession,
+    translate_client,
+    lang_code_map: dict,
+) -> List[Message]:
+    """
+    處理使用者傳送的位置訊息。
+    """
+    loc = event.message
+    # 呼叫店家服務，根據使用者位置尋找並同步附近的店家資料
+    stores = await store_service.find_and_sync_nearby_stores(
+        db=db,
+        aiohttp_session=aiohttp_session,
+        user_lat=loc.latitude,
+        user_lng=loc.longitude,
+        title=loc.title,
+        address=loc.address,
+    )
+
+    if not stores:
+        # 如果找不到店家，回傳 "no stores found" 訊息
+        return [
+            await line_messages.create_simple_text_message(
+                user,
+                "no_stores_found",
+                translate_client=translate_client,
+                lang_code_map=lang_code_map,
+            )
+        ]
+    else:
+        # 如果找到店家，建立並回傳店家輪播訊息
+        return [
+            await line_messages.create_store_carousel_message(
+                stores, user, translate_client, lang_code_map
+            )
+        ]
+
+
+async def handle_postback(
+    event: PostbackEvent,
+    user: User,
+    db: AsyncSession,
+    translate_client,
+    lang_code_map: dict,
+    native_language_list: list,
+    language_display_texts: dict,
+) -> List[Message]:
+    """
+    處理 Postback 事件。
+    """
+    try:
+        # 解析 postback data 欄位中的 JSON 字串
+        data = json.loads(event.postback.data)
+        # 取得 action 類型
+        action_str = data.get("action")
+
+        # --- Postback 路由邏輯 ---
+        if action_str == ActionType.SHOW_ORDER_DETAILS:
+            # 如果是 "顯示訂單詳情"
+            raw_order_id = data.get("order_id")
+            try:
+                if raw_order_id is None:
+                    raise ValueError("order_id is missing from postback data")
+                
+                order_id = int(raw_order_id)
+                # 呼叫訂單服務處理
+                return await order_service.handle_show_order_details_request(
+                    db, user, order_id, translate_client, lang_code_map
+                )
+
+            except (ValueError, TypeError):
+                # 如果 order_id 格式不正確，記錄錯誤並回傳通用錯誤訊息
+                logger.error(
+                    f"Invalid order_id '{raw_order_id}' received in postback for user {user.line_user_id}."
+                )
+                return [
+                    await line_messages.create_simple_text_message(
+                        user,
+                        "generic_error",
+                        translate_client=translate_client,
+                        lang_code_map=lang_code_map,
                     )
                 ]
-            )
-            carousel_columns.append(column)
 
-        # 如果處理完後，有效的卡片數量為 0，則回覆找不到
-        if not carousel_columns:
-            not_found_text = await get_translated_text(user, "no_stores_found")
-            async with AsyncApiClient(line_config) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                await line_bot_api.reply_message(ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=not_found_text)]))
-            return
-
-        # --- 回傳輪播卡片訊息 ---
-        carousel_template = TemplateMessage(
-            alt_text='附近的店家列表',
-            template=CarouselTemplate(columns=carousel_columns)
-        )
-
-        # 【修正】呼叫函式以取得主選單訊息
-        #main_menu_messages = await get_main_menu_messages(user)
-
-        # 【修正】將店家輪播卡片和主選單合併到一個列表中回傳
-        messages_to_reply = [carousel_template]
-        #messages_to_reply = [carousel_template] + main_menu_messages
-        
-        async with AsyncApiClient(line_config) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            await line_bot_api.reply_message(
-                ReplyMessageRequest(reply_token=event.reply_token, messages=messages_to_reply)
+        elif action_str == ActionType.ORDER_HISTORY:
+            # 如果是 "查詢歷史訂單"，呼叫訂單服務處理
+            return await order_service.handle_order_history_request(
+                db, user, translate_client, lang_code_map
             )
 
-    # --- 如果使用者在其他狀態傳送位置 ---
-    else:
-        logging.info(f"Received unexpected location from user {line_user_id} in state '{user.state}'")
-        
-        # 呼叫共用的文字處理邏輯，讓它根據當前狀態回覆對應的提示
-        # 我們傳入一個不會被識別的文字 (例如空字串)，來觸發預設的回應
-        reply_messages = await process_language_text(line_user_id, "", db)
-        
-        async with AsyncApiClient(line_config) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            await line_bot_api.reply_message(
-                ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
+        elif action_str == ActionType.CHANGE_LANGUAGE:
+            # 如果是 "變更語言"，呼叫語言服務處理
+            return await language_service.handle_change_language_request(
+                user,
+                translate_client,
+                lang_code_map,
+                native_language_list,
+                language_display_texts,
             )
 
-# --- 【核心修改】建立並回傳歷史訂單輪播卡片 (功能升級版) ---
-async def handle_order_history(user: User, db: AsyncSession) -> List:
-    """
-    查詢使用者最新的 10 筆訂單，並將其格式化為 LINE 輪播卡片。
-    每張卡片有兩個按鈕：
-    1. 再次訂購 (LIFF)
-    2. 查看訂單詳情 (Postback)
-    """
-    order_stmt = (
-        select(Order)
-        .options(joinedload(Order.store))
-        .where(Order.user_id == user.user_id)
-        .order_by(desc(Order.order_time))
-        .limit(10)
-    )
-    orders_result = await db.execute(order_stmt)
-    latest_orders = orders_result.scalars().all()
-
-    if not latest_orders:
-        no_history_text = await get_translated_text(user, "no_order_history")
-        return [TextMessage(text=no_history_text)]
-
-    carousel_columns = []
-    
-    # --- 平行翻譯按鈕標籤 ---
-    # 透過 asyncio.gather 可以同時執行多個 awaitable，節省等待時間
-    translated_labels = await asyncio.gather(
-        get_translated_text(user, "view_order_details"),
-        get_translated_text(user, "order_again")
-    )
-
-    view_details_label = translated_labels[0]
-    order_again_label = translated_labels[1]
-
-    for order in latest_orders:
-        store = order.store
-        store_name = store.store_name if store else "店家資訊遺失"
-        
-        # 卡片文字不變，只顯示摘要資訊
-        card_text = (
-            f"📅 {order.order_time.strftime('%Y-%m-%d %H:%M')}\n"
-            f"💰 ${order.total_amount}"
-        )
-        
-        actions = []
-
-        translated_display_text = await get_translated_text(
-            user, 
-            "querying_order_details", 
-            store_name=store_name
-        )
-
-        # --- 按鈕一：查看訂單詳情 (Postback) ---
-        # data 格式設計為 'action=show_order_details&order_id=...'
-        # 這樣未來若有其他 postback 動作，可以輕易擴充
-        postback_data = f"action=show_order_details&order_id={order.order_id}"
-        actions.append(PostbackAction(
-            label=view_details_label,
-            data=postback_data,
-            # 使用翻譯後的文字
-            displayText=translated_display_text
-        ))
-
-        # --- 按鈕二：再次訂購 (LIFF) ---
-        if store and store.store_id and store.store_name:
-            # 【修正】傳入 user 和 store 兩個物件
-            liff_full_url = create_liff_url(user, store)
-            actions.append(URIAction(label=order_again_label, uri=liff_full_url))
-
-        # 建立輪播卡片欄位
-        column = CarouselColumn(
-            title=store_name[:40],
-            text=card_text[:60], # 內文維持簡潔
-            actions=actions # 將兩個按鈕都放進去
-        )
-        carousel_columns.append(column)
-
-    carousel_template = TemplateMessage(
-        alt_text='您的歷史訂單',
-        template=CarouselTemplate(columns=carousel_columns)
-    )
-    
-    # 【修正】呼叫函式以取得主選單訊息
-    #main_menu_messages = await get_main_menu_messages(user)
-
-    # 【修正】將歷史訂單輪播卡片和主選單合併到一個列表中回傳
-    return [carousel_template]
-    #return [carousel_template] + main_menu_messages
-
-# --- 【修改處】擴充 Postback 事件處理器 ---
-async def handle_postback(event: PostbackEvent, db: AsyncSession):
-    line_user_id = event.source.user_id
-    # postback.data 的內容是我們在建立按鈕時自己定義的
-    postback_data = event.postback.data
-    
-    user_result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = user_result.scalar_one_or_none()
-    if not user:
-        error_text = await get_translated_text(None, "user_not_found")
-        reply_messages = [TextMessage(text=error_text)]
-        # 如果找不到使用者，後續邏輯無法執行，直接回覆並返回
-        async with AsyncApiClient(line_config) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            await line_bot_api.reply_message(
-                ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
+        elif action_str == ActionType.SET_LANGUAGE:
+            # 如果是 "設定語言"
+            lang_code = data.get("lang_code")
+            # 呼叫語言服務處理
+            return await language_service.handle_set_language_request(
+                db, user, lang_code, translate_client, lang_code_map, native_language_list
             )
-        return
 
-    # --- 新增的判斷邏輯：處理主選單按鈕 ---
-    if postback_data == "action=change_language":
-        # 模擬使用者輸入 'change language'
-        reply_messages = await process_language_text(line_user_id, 'change language', db)
-    
-    elif postback_data == "action=order_now":
-        # 模擬使用者輸入 'order now'
-        reply_messages = await process_language_text(line_user_id, 'order now', db)
+        elif action_str == ActionType.SHOW_STORE_SUMMARY:
+            # 如果是 "顯示店家介紹"
+            raw_store_id = data.get("store_id")
+            try:
+                if raw_store_id is None:
+                    raise ValueError("store_id is missing from postback data")
 
-    elif postback_data == "action=order_history":
-        # 模擬使用者輸入 'order history'
-        reply_messages = await process_language_text(line_user_id, 'order history', db)
-
-    # --- 原有的判斷邏輯：處理訂單詳情 ---
-    elif postback_data.startswith("action=show_order_details"):
-        parsed_data = parse_qs(postback_data)
-        order_id = parsed_data.get('order_id', [None])[0]
-        if not order_id:
-            error_text = await get_translated_text(user, "generic_error")
-            reply_messages = [TextMessage(text=error_text)]
-        else:
-            stmt = (
-                select(Order)
-                .where(Order.order_id == int(order_id))
-                .options(joinedload(Order.store), joinedload(Order.items))
-            )
-            result = await db.execute(stmt)
-            order = result.unique().scalar_one_or_none()
-            if not order:
-                error_text = await get_translated_text(user, "generic_error")
-                reply_messages = [TextMessage(text=error_text)]
-            else:
-                trans_texts = await asyncio.gather(
-                    get_translated_text(user, "order_details_title"),
-                    get_translated_text(user, "order_details_store"),
-                    get_translated_text(user, "order_details_time"),
-                    get_translated_text(user, "order_details_total"),
-                    get_translated_text(user, "order_details_items_header")
+                store_id = int(raw_store_id)
+                # 直接呼叫 crud 函式查詢翻譯摘要
+                summary = await crud.get_store_translation_summary(
+                    db, store_id, user.preferred_lang
                 )
-                title, store_label, time_label, total_label, items_header = trans_texts
-                store_name = order.store.store_name if order.store else "N/A"
-                details_parts = [
-                    f"<{title}>", "--------------------",
-                    f"{store_label}: {store_name}",
-                    f"{time_label}: {order.order_time.strftime('%Y-%m-%d %H:%M')}",
-                    f"{total_label}: ${order.total_amount}",
-                    "\n" + f"{items_header}:"
+                if summary:
+                    # 如果有摘要，直接回傳文字訊息
+                    return [TextMessage(text=summary)]
+                else:
+                    # 如果沒有摘要，回傳 "not found" 訊息
+                    return [
+                        await line_messages.create_simple_text_message(
+                            user,
+                            "store_summary_not_found",
+                            translate_client=translate_client,
+                            lang_code_map=lang_code_map,
+                        )
+                    ]
+
+            except (ValueError, TypeError):
+                logger.error(
+                    f"Invalid store_id '{raw_store_id}' received in postback for user {user.line_user_id}."
+                )
+                return [
+                    await line_messages.create_simple_text_message(
+                        user,
+                        "generic_error",
+                        translate_client=translate_client,
+                        lang_code_map=lang_code_map,
+                    )
                 ]
-                if order.items:
-                    for item in order.items:
-                        item_name = item.translated_name or item.original_name
-                        details_parts.append(f"- {item_name} x {item.quantity_small}  (${item.subtotal})")
-                reply_text = "\n".join(details_parts)
-                reply_messages = [TextMessage(text=reply_text)]
+        
+        else:
+            # 如果是未知的 action
+            logger.warning(f"Unknown postback action '{action_str}' received.")
+            return await user_service.handle_unknown_command(
+                user, translate_client, lang_code_map
+            )
 
-    # --- 如果收到無法識別的 postback data ---
-    else:
-        error_text = await get_translated_text(user, "generic_error")
-        reply_messages = [TextMessage(text=error_text)]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        # 如果 postback data 格式錯誤 (例如無法解析 JSON)，記錄錯誤並回傳通用錯誤訊息
+        logger.error(
+            f"Error processing postback data for user {user.line_user_id}: {e}",
+            exc_info=True,
+        )
+        return [
+            await line_messages.create_simple_text_message(
+                user,
+                "generic_error",
+                translate_client=translate_client,
+                lang_code_map=lang_code_map,
+            )
+        ]
 
-    # --- 統一回覆訊息給使用者 ---
-    async with AsyncApiClient(line_config) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        await line_bot_api.reply_message(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=reply_messages)
+
+async def process_text_command(
+    user: User,
+    text: str,
+    db: AsyncSession,
+    translate_client,
+    lang_code_map: dict,
+    native_language_list: list,
+    language_display_texts: dict,
+) -> List[Message]:
+    """
+    處理使用者傳送的文字訊息中的簡單指令。
+    """
+    # 將使用者輸入的文字去除頭尾空白並轉為小寫，方便比對
+    user_text = text.strip().lower()
+
+    # --- 文字指令路由 ---
+    # 這裡的指令是英文，因為主要互動是透過按鈕。這部分可以視為一個備用或開發時的快速指令。
+    if user_text == "order now":
+        return await order_service.handle_order_now_request(
+            user, translate_client, lang_code_map
         )
 
-# --- 共用的文字處理邏輯 ---
-async def process_language_text(line_user_id: str, text: str, db: AsyncSession) -> List[TextMessage]:
-    user_text = text.strip().lower()
-    
-    result = await db.execute(select(User).filter_by(line_user_id=line_user_id))
-    user = result.scalar_one_or_none()
+    elif user_text == "change language":
+        return await language_service.handle_change_language_request(
+            user,
+            translate_client,
+            lang_code_map,
+            native_language_list,
+            language_display_texts,
+        )
 
-    if not user:
-        error_text = await get_translated_text(None, "user_not_found")
-        return [TextMessage(text=error_text)]
+    elif user_text == "order history":
+        return await order_service.handle_order_history_request(
+            db, user, translate_client, lang_code_map
+        )
 
-    # 只有當使用者處於特定等待狀態時，取消指令才生效
-    if user_text == '0' and user.state in ['awaiting_location', 'awaiting_language']:
-        previous_state = user.state # 記錄一下是從哪個狀態取消的
-        user.state = 'normal'  # 將狀態重設為正常
-        await db.commit()
-        # 使用回覆樣板來通知使用者操作已取消
-        cancelled_text = await get_translated_text(user, "operation_cancelled")
-        logging.info(f"User {line_user_id} cancelled the operation from state '{previous_state}'.")
-        # 【修正】呼叫函式以取得主選單訊息
-        main_menu_messages = await get_main_menu_messages(user)
-        # 【修正】將取消訊息和主選單合併回傳
-        return [TextMessage(text=cancelled_text)] + main_menu_messages
-
-    # --- 狀態一：等待位置 ---
-    if user.state == 'awaiting_location':
-        # 使用新的回覆樣板 "reprompt_location"
-        reprompt_text = await get_translated_text(user, "reprompt_location")
-        return [TextMessage(
-            text=reprompt_text,
-            quick_reply=QuickReply(items=[
-                QuickReplyItem(action=LocationAction(label="分享我的位置"))
-            ])
-        )]
-
-    # 狀態二：等待語言輸入
-    elif user.state == 'awaiting_language':
-        lang_code = language_lookup_dict.get(user_text)
-        if lang_code:
-            user.preferred_lang = lang_code
-            user.state = 'normal'
-            
-            result = await db.execute(select(Language).filter_by(line_lang_code=lang_code))
-            language = result.scalar_one_or_none()
-            canonical_lang_name = language.lang_name if language else lang_code
-            
-            localized_lang_name = await localize_lang_name(canonical_lang_name, user.preferred_lang)
-
-            await db.commit()
-            
-            success_text = await get_translated_text(user, "language_set_success", lang_name=localized_lang_name)
-            # 【修正】呼叫函式以取得主選單訊息
-            #main_menu_messages = await get_main_menu_messages(user)
-            # 【修正】將成功訊息和主選單合併回傳
-            return [TextMessage(text=success_text)]
-            #return [TextMessage(text=success_text)] + main_menu_messages
-        else:
-            # 準備第一則訊息：無法識別的錯誤提示
-            not_recognized_text = await get_translated_text(user, "language_not_recognized")
-            messages_to_reply = [TextMessage(text=not_recognized_text)]
-
-            # 準備第二則訊息：再次附上語言列表
-            # 我們使用之前建立的全域變數 LANGUAGE_LIST_STRING
-            if LANGUAGE_LIST_STRING:
-                messages_to_reply.append(TextMessage(text=LANGUAGE_LIST_STRING))
-            
-            return messages_to_reply
-            
-    # 狀態三：正常
-    else: # user.state == 'normal'
-        if user_text == 'order now':
-            user.state = 'awaiting_location'
-            await db.commit()
-            
-            ask_location_text = await get_translated_text(user, "ask_location")
-            return [TextMessage(
-                text=ask_location_text,
-                quick_reply=QuickReply(items=[
-                    QuickReplyItem(action=LocationAction(label="分享我的位置"))
-                ])
-            )]
-        
-        elif user_text == 'change language':
-            user.state = 'awaiting_language'
-            await db.commit()
-            
-            ask_language_text = await get_translated_text(user, "ask_language")
-            messages_to_reply = [TextMessage(text=ask_language_text)]
-
-            # 如果我們成功讀取並格式化了語言列表，就將它作為第二則訊息加入
-            if LANGUAGE_LIST_STRING:
-                messages_to_reply.append(TextMessage(text=LANGUAGE_LIST_STRING))
-
-            return messages_to_reply
-        
-        elif user_text == 'order history':
-            # 我們將在這裡呼叫一個新的函式來處理複雜的查詢與卡片生成邏輯
-            # 這樣可以讓 process_language_text 保持簡潔
-            return await handle_order_history(user, db)
-        
-        # --- 【修改處】當沒有任何指令匹配時，回覆主選單按鈕 ---
-        else:
-            # 回傳訊息列表
-            return await get_main_menu_messages(user)
+    else:
+        # 如果不是任何已知的指令，回傳主選單
+        return await user_service.handle_unknown_command(
+            user, translate_client, lang_code_map
+        )
