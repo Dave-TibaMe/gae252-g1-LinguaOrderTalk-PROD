@@ -226,10 +226,22 @@ def get_menu(store_id):
         if not store:
             return jsonify({"error": "找不到店家"}), 404
         
-        # 嘗試查詢菜單項目，過濾掉價格為 0 的商品
+        # 嘗試查詢菜單項目，透過菜單關聯查詢，過濾掉價格為 0 的商品
         try:
+            # 先查詢店家的菜單
+            menus = Menu.query.filter(Menu.store_id == store_id).all()
+            if not menus:
+                return jsonify({
+                    "error": "此店家目前沒有菜單",
+                    "store_id": store_id,
+                    "store_name": store.store_name,
+                    "message": "請使用菜單圖片上傳功能來建立菜單"
+                }), 404
+            
+            # 透過菜單查詢菜單項目
+            menu_ids = [menu.menu_id for menu in menus]
             menu_items = MenuItem.query.filter(
-                MenuItem.store_id == store_id,
+                MenuItem.menu_id.in_(menu_ids),
                 MenuItem.price_small > 0  # 只返回價格大於 0 的商品
             ).all()
         except Exception as e:
@@ -313,10 +325,23 @@ def get_menu_by_place_id(place_id):
         if not store:
             return jsonify({"error": "找不到店家"}), 404
         
-        # 嘗試查詢菜單項目，過濾掉價格為 0 的商品
+        # 嘗試查詢菜單項目，透過菜單關聯查詢，過濾掉價格為 0 的商品
         try:
+            # 先查詢店家的菜單
+            menus = Menu.query.filter(Menu.store_id == store.store_id).all()
+            if not menus:
+                return jsonify({
+                    "error": "此店家目前沒有菜單",
+                    "store_id": store.store_id,
+                    "place_id": place_id,
+                    "store_name": store.store_name,
+                    "message": "請使用菜單圖片上傳功能來建立菜單"
+                }), 404
+            
+            # 透過菜單查詢菜單項目
+            menu_ids = [menu.menu_id for menu in menus]
             menu_items = MenuItem.query.filter(
-                MenuItem.store_id == store.store_id,
+                MenuItem.menu_id.in_(menu_ids),
                 MenuItem.price_small > 0  # 只返回價格大於 0 的商品
             ).all()
         except Exception as e:
@@ -383,13 +408,31 @@ def check_partner_status():
         if not store:
             return jsonify({"error": "找不到店家"}), 404
         
+        # 檢查是否有菜單（需要實際查詢菜單項目）
+        try:
+            # 先查詢店家的菜單
+            menus = Menu.query.filter(Menu.store_id == store.store_id).all()
+            has_menu = False
+            
+            if menus:
+                # 檢查菜單是否有項目
+                menu_ids = [menu.menu_id for menu in menus]
+                menu_items = MenuItem.query.filter(
+                    MenuItem.menu_id.in_(menu_ids),
+                    MenuItem.price_small > 0  # 只計算有價格的項目
+                ).count()
+                has_menu = menu_items > 0
+        except Exception as e:
+            print(f"檢查菜單時發生錯誤: {e}")
+            has_menu = False
+        
         return jsonify({
             "store_id": store.store_id,
             "store_name": store.store_name,
             "place_id": store.place_id,
             "partner_level": store.partner_level,
             "is_partner": store.partner_level > 0,
-            "has_menu": bool(store.menus and len(store.menus) > 0)
+            "has_menu": has_menu
         })
         
     except Exception as e:
@@ -3507,6 +3550,360 @@ def resolve_store():
             "error": "店家識別碼解析失敗",
             "details": str(e),
             "place_id": place_id if 'place_id' in locals() else None
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+@api_bp.route('/admin/menu/process-ocr', methods=['POST', 'OPTIONS'])
+def admin_process_menu_ocr():
+    """
+    後台管理系統專用的菜單辨識 API
+    功能：接收菜單圖片，進行 OCR 辨識，直接儲存到資料庫
+    回應：只返回 OCR 菜單 ID 和基本資訊，不包含完整的菜單資料
+    
+    注意：此端點僅供後台管理系統使用，LIFF 前端請使用 /api/menu/process-ocr
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    # 後台管理系統驗證（可選）
+    admin_token = request.form.get('admin_token')
+    if admin_token:
+        expected_token = os.getenv('ADMIN_API_TOKEN')
+        if expected_token and admin_token != expected_token:
+            response = jsonify({'error': '無效的管理員權限'})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 403
+    
+    # 檢查是否有檔案
+    if 'image' not in request.files:
+        response = jsonify({'error': '沒有上傳檔案'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+    
+    file = request.files['image']
+    
+    # 檢查檔案名稱
+    if file.filename == '':
+        response = jsonify({'error': '沒有選擇檔案'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+    
+    # 檢查檔案格式
+    if not allowed_file(file.filename):
+        response = jsonify({'error': '不支援的檔案格式'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+    
+    # 取得參數
+    raw_store_id = request.form.get('store_id')  # 店家 ID
+    user_id = request.form.get('user_id', 'admin_system')  # 後台系統使用者 ID
+    target_lang = request.form.get('lang', 'zh')  # 預設中文
+    store_name = request.form.get('store_name', '')  # 店家名稱（可選）
+    
+    if not raw_store_id:
+        response = jsonify({"error": "需要提供店家ID"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+    
+    # 使用 store resolver 解析店家 ID
+    try:
+        from .store_resolver import resolve_store_id
+        store_db_id = resolve_store_id(raw_store_id)
+        print(f"✅ 店家ID解析成功: {raw_store_id} -> {store_db_id}")
+    except Exception as e:
+        print(f"❌ 店家ID解析失敗: {e}")
+        response = jsonify({
+            "error": "店家ID格式錯誤",
+            "details": str(e),
+            "received_store_id": raw_store_id
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 400
+    
+    try:
+        # 儲存上傳的檔案
+        filepath = save_uploaded_file(file)
+        
+        # 使用 Gemini API 處理圖片
+        print("開始使用 Gemini API 處理圖片...")
+        result = process_menu_with_gemini(filepath, target_lang)
+        
+        # 檢查處理結果
+        if result and result.get('success', False):
+            # 處理 user_id - 使用後台系統使用者
+            if user_id:
+                # 檢查是否已存在該使用者
+                existing_user = User.query.filter_by(line_user_id=user_id).first()
+                if existing_user:
+                    actual_user_id = existing_user.user_id
+                    print(f"✅ 使用現有使用者，ID: {actual_user_id} (後台系統: {user_id})")
+                else:
+                    # 創建後台系統使用者
+                    new_user = User(
+                        line_user_id=user_id,
+                        preferred_lang=target_lang or 'zh'
+                    )
+                    db.session.add(new_user)
+                    db.session.flush()  # 獲取 user_id
+                    actual_user_id = new_user.user_id
+                    print(f"✅ 創建後台系統使用者，ID: {actual_user_id} (後台系統: {user_id})")
+            else:
+                # 沒有提供 user_id，創建預設後台使用者
+                temp_user = User(
+                    line_user_id=f"admin_system_{int(time.time())}",
+                    preferred_lang=target_lang or 'zh'
+                )
+                db.session.add(temp_user)
+                db.session.flush()  # 獲取 user_id
+                actual_user_id = temp_user.user_id
+                print(f"✅ 創建預設後台使用者，ID: {actual_user_id}")
+            
+            # 建立 OCR 菜單記錄
+            ocr_menu = OCRMenu(
+                user_id=actual_user_id,
+                store_id=store_db_id,
+                store_name=store_name or result.get('store_info', {}).get('name', '後台管理店家')
+            )
+            db.session.add(ocr_menu)
+            db.session.flush()  # 獲取 ocr_menu_id
+            
+            # 儲存菜單項目到資料庫
+            menu_items = result.get('menu_items', [])
+            saved_items = []
+            
+            for item in menu_items:
+                # 儲存到 ocr_menu_items 表
+                ocr_menu_item = OCRMenuItem(
+                    ocr_menu_id=ocr_menu.ocr_menu_id,
+                    item_name=str(item.get('original_name', '') or ''),
+                    price_small=item.get('price', 0),
+                    price_big=item.get('price', 0),  # 使用相同價格
+                    translated_desc=str(item.get('translated_name', '') or '')
+                )
+                db.session.add(ocr_menu_item)
+                
+                # 收集已儲存的項目資訊
+                saved_items.append({
+                    'item_name': str(item.get('original_name', '') or ''),
+                    'translated_name': str(item.get('translated_name', '') or ''),
+                    'price': item.get('price', 0),
+                    'description': str(item.get('description', '') or ''),
+                    'category': str(item.get('category', '') or '其他')
+                })
+            
+            # 提交資料庫變更
+            db.session.commit()
+            
+            # 準備回應資料（簡化版，適合後台系統）
+            response_data = {
+                "success": True,
+                "ocr_menu_id": ocr_menu.ocr_menu_id,
+                "store_id": store_db_id,
+                "store_name": ocr_menu.store_name,
+                "total_items": len(saved_items),
+                "upload_time": ocr_menu.upload_time.isoformat() if ocr_menu.upload_time else None,
+                "processing_notes": result.get('processing_notes', ''),
+                "message": f"成功辨識並儲存 {len(saved_items)} 個菜單項目"
+            }
+            
+            response = jsonify(response_data)
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            
+            # 記錄成功日誌
+            print(f"🎉 後台系統 API 成功回應 201 Created")
+            print(f"📊 回應統計:")
+            print(f"  - OCR菜單ID: {ocr_menu.ocr_menu_id}")
+            print(f"  - 菜單項目數: {len(saved_items)}")
+            print(f"  - 店家ID: {store_db_id}")
+            print(f"  - 店家名稱: {ocr_menu.store_name}")
+            
+            return response, 201
+        else:
+            # 處理失敗
+            error_message = result.get('error', '菜單處理失敗，請重新拍攝清晰的菜單照片')
+            processing_notes = result.get('processing_notes', '')
+            
+            print(f"❌ 後台系統 API 返回錯誤")
+            print(f"🔍 錯誤詳情:")
+            print(f"  - 錯誤訊息: {error_message}")
+            print(f"  - 處理備註: {processing_notes}")
+            
+            response = jsonify({
+                "success": False,
+                "error": error_message,
+                "processing_notes": processing_notes
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 422
+                
+    except Exception as e:
+        print(f"❌ 後台系統處理過程中發生錯誤: {e}")
+        response = jsonify({
+            "success": False,
+            "error": "處理過程中發生錯誤",
+            "details": str(e) if current_app.debug else '請稍後再試'
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+@api_bp.route('/admin/menu/ocr/<int:ocr_menu_id>', methods=['GET', 'OPTIONS'])
+def admin_get_ocr_menu(ocr_menu_id):
+    """
+    後台管理系統專用的 OCR 菜單查詢 API
+    功能：根據 OCR 菜單 ID 查詢詳細的菜單資料
+    
+    注意：此端點僅供後台管理系統使用，LIFF 前端請使用 /api/menu/ocr/{ocr_menu_id}
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    # 後台管理系統驗證（可選）
+    admin_token = request.args.get('admin_token')
+    if admin_token:
+        expected_token = os.getenv('ADMIN_API_TOKEN')
+        if expected_token and admin_token != expected_token:
+            response = jsonify({'error': '無效的管理員權限'})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 403
+    
+    try:
+        # 查詢 OCR 菜單
+        ocr_menu = OCRMenu.query.get(ocr_menu_id)
+        if not ocr_menu:
+            response = jsonify({
+                "success": False,
+                "error": "找不到指定的 OCR 菜單",
+                "ocr_menu_id": ocr_menu_id
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 404
+        
+        # 查詢菜單項目
+        menu_items = OCRMenuItem.query.filter_by(ocr_menu_id=ocr_menu_id).all()
+        
+        # 準備回應資料
+        items_data = []
+        for item in menu_items:
+            items_data.append({
+                'ocr_menu_item_id': item.ocr_menu_item_id,
+                'item_name': item.item_name,
+                'translated_desc': item.translated_desc,
+                'price_small': item.price_small,
+                'price_big': item.price_big
+            })
+        
+        response_data = {
+            "success": True,
+            "ocr_menu": {
+                "ocr_menu_id": ocr_menu.ocr_menu_id,
+                "store_id": ocr_menu.store_id,
+                "store_name": ocr_menu.store_name,
+                "user_id": ocr_menu.user_id,
+                "upload_time": ocr_menu.upload_time.isoformat() if ocr_menu.upload_time else None,
+                "items": items_data,
+                "total_items": len(items_data)
+            }
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
+        
+    except Exception as e:
+        print(f"❌ 查詢 OCR 菜單失敗: {e}")
+        response = jsonify({
+            "success": False,
+            "error": "查詢失敗",
+            "details": str(e) if current_app.debug else '請稍後再試'
+        })
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+@api_bp.route('/admin/menu/ocr', methods=['GET', 'OPTIONS'])
+def admin_list_ocr_menus():
+    """
+    後台管理系統專用的 OCR 菜單列表 API
+    功能：列出所有 OCR 菜單的基本資訊
+    
+    注意：此端點僅供後台管理系統使用，LIFF 前端請使用 /api/menu/ocr/user/{user_id}
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    # 後台管理系統驗證（可選）
+    admin_token = request.args.get('admin_token')
+    if admin_token:
+        expected_token = os.getenv('ADMIN_API_TOKEN')
+        if expected_token and admin_token != expected_token:
+            response = jsonify({'error': '無效的管理員權限'})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 403
+    
+    try:
+        # 取得查詢參數
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        store_id = request.args.get('store_id', type=int)
+        
+        # 建立查詢
+        query = OCRMenu.query
+        
+        # 如果指定了店家 ID，進行過濾
+        if store_id:
+            query = query.filter_by(store_id=store_id)
+        
+        # 按上傳時間倒序排列
+        query = query.order_by(OCRMenu.upload_time.desc())
+        
+        # 分頁查詢
+        pagination = query.paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False
+        )
+        
+        # 準備回應資料
+        menus_data = []
+        for ocr_menu in pagination.items:
+            # 查詢每個菜單的項目數量
+            item_count = OCRMenuItem.query.filter_by(ocr_menu_id=ocr_menu.ocr_menu_id).count()
+            
+            menus_data.append({
+                'ocr_menu_id': ocr_menu.ocr_menu_id,
+                'store_id': ocr_menu.store_id,
+                'store_name': ocr_menu.store_name,
+                'user_id': ocr_menu.user_id,
+                'upload_time': ocr_menu.upload_time.isoformat() if ocr_menu.upload_time else None,
+                'item_count': item_count
+            })
+        
+        response_data = {
+            "success": True,
+            "ocr_menus": menus_data,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": pagination.total,
+                "pages": pagination.pages,
+                "has_next": pagination.has_next,
+                "has_prev": pagination.has_prev
+            }
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
+        
+    except Exception as e:
+        print(f"❌ 查詢 OCR 菜單列表失敗: {e}")
+        response = jsonify({
+            "success": False,
+            "error": "查詢失敗",
+            "details": str(e) if current_app.debug else '請稍後再試'
         })
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response, 500

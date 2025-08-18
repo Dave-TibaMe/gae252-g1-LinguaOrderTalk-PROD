@@ -18,11 +18,17 @@ from dotenv import load_dotenv
 import os
 
 # 嘗試載入環境變數文件，如果不存在則忽略
-env_file = 'notebook.env'
-if os.path.exists(env_file):
-    load_dotenv(env_file)
-    print(f"Loaded environment variables from {env_file}")
-else:
+env_files = ['.env', 'notebook.env']
+env_loaded = False
+
+for env_file in env_files:
+    if os.path.exists(env_file):
+        load_dotenv(env_file)
+        print(f"Loaded environment variables from {env_file}")
+        env_loaded = True
+        break
+
+if not env_loaded:
     # 在 Cloud Run 環境中，環境變數應該已經設定好了
     print("Environment file not found, using system environment variables")
 
