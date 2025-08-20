@@ -20,7 +20,7 @@
         /* 隱藏預設的檔案上傳按鈕 */
         input[type="file"] { display: none; }
         
-        /* 顯示店家ID/語言那行 */
+        /* 隱藏店家ID/語言那行 */
         #lang-info {
             display: none;
         }
@@ -70,7 +70,7 @@
 
         <!-- 讀取中畫面 -->
         <div id="loading" class="text-center py-20">
-            <p class="text-gray-500">正在準備點餐環境...</p>
+            <p class="text-gray-500">Loading...</p>
         </div>
 
         <!-- 主內容 (預設隱藏) -->
@@ -94,7 +94,7 @@
             <section id="store-info" class="bg-white p-4 rounded-lg shadow-md mb-6">
                 <div class="text-center">
                     <h2 id="current-store-name" class="text-lg font-bold text-gray-700 mb-2">載入中...</h2>
-                    <p id="store-type-badge" class="text-sm text-gray-500">正在準備點餐環境</p>
+                    <p id="store-type-badge" class="text-sm text-gray-500">Loading...</p>
                 </div>
             </section>
 
@@ -192,13 +192,13 @@
     <script>
         // --- 環境變數設定 ---
         // 正式環境後端網址
+        // 取得 LIFF ID 後，請將上面的 'your-liff-id' 替換為您的實際 LIFF ID
         //const API_BASE_URL = 'https://ordering-helper-backend-1095766716155.asia-east1.run.app'; // Cloud Run 後端網址
         //const LIFF_ID = '2007881521-VavMAlwe'; // 請替換為您的 LIFF ID (例如: 1234567890-abcdefgh)
         const API_BASE_URL = 'https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app'; // Cloud Run 後端網址
         const LIFF_ID = '2007952426-9BVDageM'; // 請替換為您的 LIFF ID (例如: 1234567890-abcdefgh)
         
 
-        // 取得 LIFF ID 後，請將上面的 'your-liff-id' 替換為您的實際 LIFF ID
         // 更新時間: 2025-01-27 - 重新啟用 Azure 部署
 
         // --- 全局變數 ---
@@ -270,6 +270,7 @@
                 closeWindow: '關閉視窗',
                 orderSuccess: '訂單已成功送出！',
                 orderFailed: '訂單送出失敗：',
+                submittingOrder: '送出中...',
                 
                 // 錯誤訊息
                 loadMenuError: '無法載入菜單資料',
@@ -346,6 +347,7 @@
                 closeWindow: 'Close Window',
                 orderSuccess: 'Order submitted successfully!',
                 orderFailed: 'Order submission failed: ',
+                submittingOrder: 'Submitting...',
                 
                 // 錯誤訊息
                 loadMenuError: 'Unable to load menu data',
@@ -422,6 +424,7 @@
                 closeWindow: 'ウィンドウを閉じる',
                 orderSuccess: '注文が正常に送信されました！',
                 orderFailed: '注文送信に失敗しました：',
+                submittingOrder: '送信中...',
                 
                 // 錯誤訊息
                 loadMenuError: 'メニューデータを読み込めません',
@@ -498,6 +501,7 @@
                 closeWindow: '창 닫기',
                 orderSuccess: '주문이 성공적으로 제출되었습니다!',
                 orderFailed: '주문 제출에 실패했습니다: ',
+                submittingOrder: '제출 중...',
                 
                 // 錯誤訊息
                 loadMenuError: '메뉴 데이터를 불러올 수 없습니다',
@@ -525,10 +529,25 @@
          * 語言協商：決定使用者的目標語言和UI語言
          * @returns {string} 目標語言碼 (BCP47格式)
          */
-        function pickUserLang() {
+        async function pickUserLang() {
             const url = new URLSearchParams(location.search);
             const fromUrl = url.get('preferred_lang') || url.get('lang');
-            const fromLiff = (liffInitialized && typeof liff.getLanguage === 'function') ? liff.getLanguage() : null;
+            
+            // 使用 liff.getAppLanguage() 替代已棄用的 getLanguage()
+            let fromLiff = null;
+            try {
+                if (liffInitialized) {
+                    // 優先使用 getAppLanguage() (v2.24+)
+                    if (typeof liff.getAppLanguage === 'function') {
+                        fromLiff = await liff.getAppLanguage();
+                    } else if (typeof liff.getLanguage === 'function') {
+                        fromLiff = liff.getLanguage();
+                    }
+                }
+            } catch (e) {
+                console.warn('LIFF 語言偵測失敗:', e);
+            }
+            
             const browser = navigator.language;
 
             // 語言優先級：URL > LIFF > 瀏覽器 > 預設
@@ -571,7 +590,14 @@
 
                 const res = await fetch(`${API_BASE_URL}/api/translate`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        // 簡化 headers，避免 CORS 問題
+                        'X-LIFF-User-Lang': currentLanguage || 'zh-TW',
+                        'X-LIFF-User-Id': currentUserId || 'guest'
+                    },
+                    mode: 'cors',
                     body: JSON.stringify({
                         source: 'en',
                         target: targetLang,                   // e.g. "fr-FR"
@@ -788,10 +814,14 @@
                 document.getElementById('current-store-name').textContent = texts.storeLoading;
             }
             
-            // 更新店家類型標籤
-            if (document.getElementById('store-type-badge').textContent === 'Preparing ordering environment' ||
-                document.getElementById('store-type-badge').textContent === '正在準備點餐環境') {
-                document.getElementById('store-type-badge').textContent = texts.preparingOrder;
+            // 更新店家類型標籤（只有在顯示「準備中」狀態時才更新）
+            const storeTypeBadge = document.getElementById('store-type-badge');
+            const currentBadgeText = storeTypeBadge.textContent;
+            if (currentBadgeText === 'Preparing ordering environment' ||
+                currentBadgeText === '正在準備點餐環境' ||
+                currentBadgeText === '注文環境を準備中') {
+                // 只有在顯示準備中狀態時才更新，避免覆蓋已設定的合作/非合作狀態
+                storeTypeBadge.textContent = texts.preparingOrder;
             }
             
             // 更新 OCR 介面（根據模式決定是否覆蓋）
@@ -853,7 +883,7 @@
                 await initializeLiff();
                 
                 // 語言協商：決定使用者的目標語言
-                const targetLang = pickUserLang();
+                const targetLang = await pickUserLang();
                 console.log('使用者目標語言:', targetLang);
                 
                 // 確保UI字典存在（如果是新語言，會動態生成）
@@ -861,6 +891,9 @@
                 
                 // 設定當前語言為目標語言
                 currentLanguage = targetLang;
+                
+                // 更新 HTML lang 屬性
+                document.documentElement.lang = currentLanguage || 'en';
                 
                 // 更新語言顯示
                 updateLanguageDisplay(currentLanguage);
@@ -986,8 +1019,8 @@
             }
             
             // 更新語言顯示
-            updateLanguageDisplay();
-            updateLanguageInfo();
+            updateLanguageDisplay(currentLanguage);
+            updateLanguageBadge();
             
             // 更新介面語言
             updateInterfaceLanguage();
@@ -1001,20 +1034,53 @@
                 const isStoreId = !isNaN(storeIdentifier);
                 const queryParam = isStoreId ? 'store_id' : 'place_id';
                 
-                // 向後端發送請求檢查店家合作狀態
-                const response = await fetch(`${API_BASE_URL}/api/stores/check-partner-status?${queryParam}=${storeIdentifier}`);
+                // 向後端發送請求檢查店家合作狀態，並傳遞語言參數
+                const backendLang = getBackendLanguage(currentLanguage);
+                
+                // 加上 cache buster 避免被快取住舊回應
+                const cacheBuster = `&v=${Date.now()}`;
+                const url = `${API_BASE_URL}/api/stores/check-partner-status?${queryParam}=${storeIdentifier}&lang=${backendLang}${cacheBuster}`;
+                
+                console.log('檢查店家狀態 URL:', url);
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-cache',
+                        // 簡化 headers，避免 CORS 問題
+                        'X-LIFF-User-Lang': currentLanguage || 'zh-TW',
+                        'X-LIFF-User-Id': currentUserId || 'guest'
+                    },
+                    mode: 'cors',
+                    cache: 'no-store',
+                    credentials: 'omit'
+                });
                 
                 if (!response.ok) {
-                    console.log('店家合作狀態檢查失敗，顯示非合作店家介面');
-                    showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
+                    console.log(`店家合作狀態檢查失敗 (HTTP ${response.status})，立即切換到非合作店家介面`);
+                    // 立即更新狀態，避免卡在「準備中」
+                    const texts = translations[currentLanguage] || translations['zh-TW'];
+                    document.getElementById('store-type-badge').innerHTML = 
+                        `<span class="bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs">${texts.nonPartnerStore}</span>`;
+                    // 翻譯店名後再顯示
+                    const displayName = await ensureTranslatedName(storeName, currentLanguage);
+                    showNonPartnerInterface(displayName, false); // 傳入 false 表示非合作店家
                     return;
                 }
                 
                 const data = await response.json();
                 console.log('店家合作狀態檢查結果:', data);
                 
-                // 更新店家資訊顯示
-                const displayStoreName = data.store_name || storeName;
+                // 更新店家資訊顯示 - 優先使用翻譯後的店名
+                let displayStoreName = data.display_name || data.translated_name || data.store_name || storeName;
+                
+                // 如果後端沒有提供翻譯且目標語言不是中文，則前端翻譯
+                if (!data.display_name && !data.translated_name && !/^zh/i.test(currentLanguage)) {
+                    displayStoreName = await ensureTranslatedName(displayStoreName, currentLanguage);
+                }
+                
                 document.getElementById('current-store-name').textContent = displayStoreName;
                 currentStoreName = displayStoreName; // 更新全域店家名稱
                 
@@ -1031,32 +1097,29 @@
                     } else {
                         // 沒有菜單，顯示相機選項介面
                         console.log('合作店家但沒有菜單，顯示相機選項');
-                        showNonPartnerInterface(storeName, true); // 傳入 true 表示是合作店家
+                        const displayName = await ensureTranslatedName(storeName, currentLanguage);
+                        showNonPartnerInterface(displayName, true); // 傳入 true 表示是合作店家
                     }
                 } else {
                     // 非合作店家
                     document.getElementById('store-type-badge').innerHTML = 
                         `<span class="bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs">${texts.nonPartnerStore}</span>`;
                     
-                    // 非合作店家也要檢查是否有菜單
-                    if (data.has_menu) {
-                        // 有菜單，載入菜單
-                        await loadPartnerStoreMenu(data.store_id || storeIdentifier, currentLanguage);
-                    } else {
-                        // 非合作店家介面（相機選項）
-                        console.log('非合作店家且沒有菜單，顯示相機選項');
-                        showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
-                    }
+                    // 非合作店家強制進入拍照模式，不管是否有菜單
+                    console.log('非合作店家，強制進入拍照模式');
+                    const displayName = await ensureTranslatedName(storeName, currentLanguage);
+                    showNonPartnerInterface(displayName, false); // 傳入 false 表示非合作店家
                 }
                 
             } catch (error) {
                 console.error('檢查店家合作狀態時發生錯誤:', error);
-                // 發生錯誤時，顯示非合作店家介面
-                showNonPartnerInterface(storeName, false); // 傳入 false 表示非合作店家
+                // 發生錯誤時，立即顯示非合作店家介面（不要卡在準備中）
+                const displayName = await ensureTranslatedName(storeName, currentLanguage);
+                showNonPartnerInterface(displayName, false); // 傳入 false 表示非合作店家
             }
         }
 
-        function updateLanguageDisplay() {
+        function updateLanguageBadge() {
             const langNames = {
                 'zh-TW': '中文',
                 'en-US': 'English',
@@ -1084,6 +1147,34 @@
                 `Store ID: ${currentStore || 'Not Selected'} / Language: ${languageName}`;
         }
 
+        async function ensureTranslatedName(name, targetLang) {
+            if (!name) return name;
+            if (/^zh/i.test(targetLang)) return name;
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/translate`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        // 簡化 headers，避免 CORS 問題
+                        'X-LIFF-User-Lang': currentLanguage || 'zh-TW',
+                        'X-LIFF-User-Id': currentUserId || 'guest'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify({ 
+                        source: 'zh',
+                        target: targetLang,
+                        contents: [name]
+                    })
+                });
+                if (!res.ok) return name;
+                const data = await res.json();
+                return data.translated?.[0] || name;
+            } catch(_) { 
+                return name; 
+            }
+        }
+
 
 
         async function loadPartnerStoreMenu(storeIdentifier, language) {
@@ -1101,19 +1192,36 @@
                     </div>
                 `;
                 
-                // 直接傳遞完整語言碼給後端（支援任意 BCP47 語言）
-                const apiLanguage = currentLanguage; // 不再轉換，直接傳遞
+                // 直接傳遞完整語言碼給後端（後端支援 BCP47 格式）
+                const apiLanguage = currentLanguage;
                 
                 // 判斷是 store_id 還是 place_id，選擇正確的 API 端點
                 const isStoreId = !isNaN(storeIdentifier);
-                const apiEndpoint = isStoreId 
-                    ? `${API_BASE_URL}/api/menu/${storeIdentifier}?lang=${apiLanguage}`
-                    : `${API_BASE_URL}/api/menu/by-place-id/${storeIdentifier}?lang=${apiLanguage}`;
+                const baseUrl = isStoreId 
+                    ? `${API_BASE_URL}/api/menu/${storeIdentifier}`
+                    : `${API_BASE_URL}/api/menu/by-place-id/${storeIdentifier}`;
+                
+                // 加上 cache buster 避免被快取住舊回應
+                const cacheBuster = `&v=${Date.now()}`;
+                const apiEndpoint = `${baseUrl}?lang=${apiLanguage}${cacheBuster}`;
                 
                 console.log('使用 API 端點:', apiEndpoint, '語言:', apiLanguage);
                 
                 // 向後端請求菜單資料
-                const response = await fetch(apiEndpoint);
+                const response = await fetch(apiEndpoint, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-cache',
+                        // 僅在有值時再加，避免 "undefined" 被送進去害預檢失敗
+                        ...(currentLanguage && {'X-LIFF-User-Lang': currentLanguage}),
+                        ...(currentUserId && {'X-LIFF-User-Id': currentUserId}),
+                    },
+                    mode: 'cors',
+                    cache: 'no-store',
+                    credentials: 'omit'
+                });
                 if (!response.ok) {
                     const texts = translations[currentLanguage] || translations['zh-TW'];
                     throw new Error(texts.loadMenuError);
@@ -1164,6 +1272,8 @@
         }
 
         function showNonPartnerInterface(storeName = '', isPartnerStore = false) {
+            console.log('顯示非合作店家介面:', { storeName, isPartnerStore });
+            
             // 顯示非合作店家介面
             const ocrSection = document.getElementById('ocr-section');
             ocrSection.classList.remove('hidden');
@@ -1177,10 +1287,21 @@
                 currentStoreName = storeName; // 更新全域店家名稱
             }
             
+            // 確保狀態標籤被正確更新（避免卡在「準備中」）
+            const storeTypeBadge = document.getElementById('store-type-badge');
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            if (isPartnerStore) {
+                // 合作店家但沒有菜單
+                storeTypeBadge.innerHTML = `<span class="bg-green-100 text-green-800 px-2 py-1 rounded-full text-xs">${texts.partnerStore}</span>`;
+            } else {
+                // 非合作店家
+                storeTypeBadge.innerHTML = `<span class="bg-orange-100 text-orange-800 px-2 py-1 rounded-full text-xs">${texts.nonPartnerStore}</span>`;
+            }
+            
             // 根據店家狀態更新標題和描述
             const ocrTitle = document.getElementById('ocr-title');
             const ocrDescription = document.getElementById('ocr-description');
-            const texts = translations[currentLanguage] || translations['zh-TW'];
             
             if (isPartnerStore) {
                 // 合作店家但沒有菜單
@@ -1353,6 +1474,15 @@
                 // 使用 upload-menu-image 端點來處理OCR菜單
                 const response = await fetch(`${API_BASE_URL}/api/upload-menu-image`, {
                     method: 'POST',
+                    headers: {
+                        // 不設定 Content-Type，讓瀏覽器自動設定 multipart/form-data 的 boundary
+                        'Accept': 'application/json',
+                        // 僅在有值時再加，避免 "undefined" 被送進去害預檢失敗
+                        ...(currentLanguage && {'X-LIFF-User-Lang': currentLanguage}),
+                        ...(currentUserId && {'X-LIFF-User-Id': currentUserId}),
+                        ...(storeId && {'X-Store-Id': storeId}),
+                    },
+                    mode: 'cors',
                     body: formData
                 });
                 
@@ -1645,6 +1775,20 @@
                 return;
             }
             
+            // 獲取送出訂單按鈕並設置載入狀態
+            const submitButton = document.getElementById('submit-order');
+            const originalText = submitButton.textContent;
+            const texts = translations[currentLanguage] || translations['zh-TW'];
+            
+            // 設置載入狀態
+            submitButton.disabled = true;
+            submitButton.innerHTML = `
+                <div class="flex items-center justify-center space-x-2">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>${texts.submittingOrder || '送出中...'}</span>
+                </div>
+            `;
+            
             try {
                 // 1. 驗證購物車資料
                 const cartItems = Object.entries(cart)
@@ -1752,7 +1896,13 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        // 僅在有值時再加，避免 "undefined" 被送進去害預檢失敗
+                        ...(currentLanguage && {'X-LIFF-User-Lang': currentLanguage}),
+                        ...(currentUserId && {'X-LIFF-User-Id': currentUserId}),
+                        ...(currentStore && {'X-Store-Id': currentStore}),
                     },
+                    mode: 'cors',
                     body: JSON.stringify(payload)
                 });
 
@@ -1829,6 +1979,10 @@
                 console.error('送出訂單失敗:', error);
                 const texts = translations[currentLanguage] || translations['zh-TW'];
                 alert(`${texts.orderFailed}${error.message}`);
+            } finally {
+                // 恢復按鈕狀態
+                submitButton.disabled = false;
+                submitButton.textContent = originalText;
             }
         });
     </script>

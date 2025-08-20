@@ -13,7 +13,7 @@ def update_environment_variables():
     
     # 新的資料庫連線參數
     new_config = {
-        'DB_HOST': '35.221.209.220',  # 測試環境
+        'DB_HOST': '34.81.245.147',  # 生產環境 Cloud MySQL
         'DB_USER': 'gae252g1usr',
         'DB_PASSWORD': 'gae252g1PSWD!',
         'DB_DATABASE': 'gae252g1_db',
@@ -59,7 +59,7 @@ def create_env_file():
     """建立 .env 檔案範本"""
     
     env_content = """# 資料庫連線設定
-DB_HOST=35.221.209.220
+DB_HOST=34.81.245.147
 DB_USER=gae252g1usr
 DB_PASSWORD=gae252g1PSWD!
 DB_DATABASE=gae252g1_db

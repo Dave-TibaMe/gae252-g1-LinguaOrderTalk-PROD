@@ -2,11 +2,18 @@
   "routes": [
     {
       "route": "/api/*",
-      "rewrite": "https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app/api/{*}"
+      "rewrite": "https://ordering-helper-backend-1095766716155.asia-east1.run.app/api/{*}"
+    },
+    {
+      "route": "/*",
+      "headers": {
+        "cache-control": "no-cache, no-store, must-revalidate"
+      }
     }
   ],
   "globalHeaders": {
-    "Access-Control-Allow-Origin": "https://proud-cliff-0c3c37b00.1.azurestaticapps.net"
+    "Access-Control-Allow-Origin": "https://green-beach-0f9762500.1.azurestaticapps.net",
+    "cache-control": "no-cache, no-store, must-revalidate"
   },
   "navigationFallback": {
     "rewrite": "/index.html",

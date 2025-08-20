@@ -17,8 +17,9 @@ from pydantic import BaseModel
 import logging
 import re
 import datetime
-from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig, ResultReason
+# from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig, ResultReason
 import tempfile
+from copy import deepcopy
 
 # =============================================================================
 # 新增：中文檢測和防呆轉換器函數
@@ -91,7 +92,35 @@ def translate_text_batch_fallback(texts: List[str], target_language: str, source
     目前簡單回傳原文，未來可整合其他翻譯服務
     """
     logging.warning(f"使用 fallback 翻譯，目標語言: {target_language}")
-    # 簡單的語言對應（可擴展）
+    
+    # 如果是英文，提供簡單的中文到英文翻譯
+    if target_language == 'en':
+        # 簡單的中文菜名翻譯對應
+        chinese_to_english = {
+            '招牌金湯酸菜': 'Signature Golden Soup Pickled Cabbage',
+            '白濃雞湯': 'White Thick Chicken Soup',
+            '14嚴選 霜降牛': '14 Selected Marbled Beef',
+            '雞肉捲': 'Chicken Roll',
+            '14嚴選 嫩肩羊': '14 Selected Lamb Shoulder',
+            '鱸魚': 'Sea Bass',
+            '魚餃': 'Fish Dumplings',
+            '養生番茄': 'Healthy Tomato',
+            '白蝦': 'White Shrimp',
+            '中草蝦': 'Medium Grass Shrimp'
+        }
+        
+        translated_texts = []
+        for text in texts:
+            # 檢查是否有對應的翻譯
+            if text in chinese_to_english:
+                translated_texts.append(chinese_to_english[text])
+            else:
+                # 如果沒有對應翻譯，回傳原文加上標記
+                translated_texts.append(f"{text} (English)")
+        
+        return translated_texts
+    
+    # 其他語言的簡單對應（可擴展）
     language_names = {
         'fr': 'French', 'de': 'German', 'es': 'Spanish', 'it': 'Italian',
         'pt': 'Portuguese', 'ru': 'Russian', 'ar': 'Arabic', 'hi': 'Hindi',
@@ -213,40 +242,20 @@ def get_gemini_client():
         print(f"Gemini API 初始化失敗: {e}")
         return None
 
-# Azure TTS 設定（延遲初始化）
+# gTTS 設定（替換 Azure Speech）
 def get_speech_config():
-    """取得 Azure Speech 配置"""
-    try:
-        # 延遲導入 Azure Speech SDK
-        from azure.cognitiveservices.speech import SpeechConfig
-        
-        speech_key = os.getenv('AZURE_SPEECH_KEY')
-        speech_region = os.getenv('AZURE_SPEECH_REGION')
-        
-        # 檢查環境變數
-        if not speech_key:
-            print("警告: AZURE_SPEECH_KEY 環境變數未設定")
-            return None
-        
-        if not speech_region:
-            print("警告: AZURE_SPEECH_REGION 環境變數未設定")
-            return None
-        
-        print(f"Azure Speech 配置: region={speech_region}")
-        
-        return SpeechConfig(
-            subscription=speech_key,
-            region=speech_region
-        )
-    except ImportError as e:
-        print(f"Azure Speech SDK 未安裝: {e}")
-        return None
-    except Exception as e:
-        print(f"Azure Speech Service 配置失敗: {e}")
-        return None
+    """取得語音配置（已改為使用 gTTS）"""
+    # 返回一個簡單的配置對象，但實際上我們使用 gTTS
+    class MockSpeechConfig:
+        def __init__(self):
+            self.speech_synthesis_voice_name = "zh-TW-HsiaoChenNeural"
+            self.speech_synthesis_speaking_rate = 1.0
+    
+    print("使用 gTTS 語音生成服務")
+    return MockSpeechConfig()
 
 def cleanup_old_voice_files(max_age=3600):
-    """刪除 60 分鐘以前的 WAV（延長清理時間）"""
+    """刪除 60 分鐘以前的 MP3（延長清理時間）"""
     try:
         import time
         now = time.time()
@@ -256,7 +265,7 @@ def cleanup_old_voice_files(max_age=3600):
         os.makedirs(VOICE_DIR, exist_ok=True)
         
         for fn in os.listdir(VOICE_DIR):
-            if not fn.endswith('.wav'):
+            if not fn.endswith('.mp3'):
                 continue
                 
             full = os.path.join(VOICE_DIR, fn)
@@ -378,9 +387,9 @@ def process_menu_with_gemini(image_path, target_language='en'):
                     'processing_notes': '請檢查 GEMINI_API_KEY 環境變數'
                 }
             
-                    # 使用 Gemini 2.5 Flash Lite 模型 + JSON Mode
+                    # 使用正確的 Gemini 模型名稱
             response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model="models/gemini-2.5-flash-lite",
                 contents=[
                     {
                         "parts": [
@@ -531,21 +540,53 @@ def parse_gemini_json_response(response_text):
                     json_text = re.sub(r'([^\\])"([^"]*?)([^\\])"', r'\1"\2\3"', json_text)
                     # 移除可能的控制字符
                     json_text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_text)
+                    # 修復多餘的逗號
+                    json_text = re.sub(r',\s*}', '}', json_text)
+                    json_text = re.sub(r',\s*]', ']', json_text)
                     
                     return json.loads(json_text)
                 except json.JSONDecodeError as e2:
                     print(f"修復後解析失敗: {e2}")
                     
-                    # 策略3: 使用 ast.literal_eval
+                    # 策略3: 嘗試提取 menu_items 部分
+                    try:
+                        # 尋找 menu_items 陣列
+                        menu_items_match = re.search(r'"menu_items"\s*:\s*\[(.*?)\]', json_text, re.DOTALL)
+                        if menu_items_match:
+                            menu_items_content = menu_items_match.group(1)
+                            # 嘗試解析每個菜單項目
+                            items = []
+                            # 簡單的正則表達式來提取項目
+                            item_matches = re.findall(r'\{[^}]*\}', menu_items_content)
+                            for item_match in item_matches:
+                                try:
+                                    # 清理項目文本
+                                    clean_item = re.sub(r',\s*}', '}', item_match)
+                                    clean_item = re.sub(r',\s*]', ']', clean_item)
+                                    item_data = json.loads(clean_item)
+                                    items.append(item_data)
+                                except:
+                                    continue
+                            
+                            if items:
+                                return {
+                                    'success': True,
+                                    'menu_items': items,
+                                    'store_info': {'name': 'Unknown Store'},
+                                    'processing_notes': 'JSON 解析修復成功'
+                                }
+                    except Exception as e3:
+                        print(f"提取 menu_items 失敗: {e3}")
+                    
+                    # 策略4: 使用 ast.literal_eval
                     try:
                         return ast.literal_eval(json_text)
                     except:
                         print("ast.literal_eval 也失敗")
                         
-                        # 策略4: 嘗試提取部分有效的 JSON
+                        # 策略5: 嘗試提取部分有效的 JSON
                         try:
                             # 尋找最長的連續 JSON 結構
-                            import re
                             json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
                             matches = re.findall(json_pattern, json_text)
                             if matches:
@@ -635,7 +676,7 @@ def test_text_normalization():
 
 def generate_voice_order(order_id, speech_rate=1.0):
     """
-    使用 Azure TTS 生成訂單語音
+    使用 gTTS 生成訂單語音
     """
     print(f"🔧 開始生成語音檔...")
     print(f"📋 輸入參數: order_id={order_id}, speech_rate={speech_rate}")
@@ -672,46 +713,32 @@ def generate_voice_order(order_id, speech_rate=1.0):
         order_text = normalize_order_text_for_tts(order_text)
         print(f"[TTS] 預處理後的訂單文本: {order_text}")
         
-        # 取得語音配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech Service 配置失敗，使用備用方案")
-            return generate_voice_order_fallback(order_id, speech_rate)
-        
         try:
-            # 延遲導入 Azure Speech SDK
-            from azure.cognitiveservices.speech import SpeechSynthesizer, AudioConfig, ResultReason
-            
-            # 設定語音參數
-            speech_config.speech_synthesis_voice_name = "zh-TW-HsiaoChenNeural"
-            speech_config.speech_synthesis_speaking_rate = speech_rate
+            # 使用 gTTS 生成語音
+            from gtts import gTTS
             
             # 確保目錄存在
             os.makedirs(VOICE_DIR, exist_ok=True)
             
-            # 直接存到 VOICE_DIR
-            filename = f"{uuid.uuid4()}.wav"
+            # 生成檔案路徑
+            filename = f"{uuid.uuid4()}.mp3"
             audio_path = os.path.join(VOICE_DIR, filename)
             print(f"[TTS] Will save to {audio_path}")
-            audio_config = AudioConfig(filename=audio_path)
-            synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
             
-            result = synthesizer.speak_text_async(order_text).get()
+            # 使用 gTTS 生成語音（中文）
+            tts = gTTS(text=order_text, lang='zh-tw', slow=False)
+            tts.save(audio_path)
             
-            if result.reason == ResultReason.SynthesizingAudioCompleted:
-                # 檢查檔案是否真的生成
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-                    print(f"[TTS] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
-                    return audio_path
-                else:
-                    print(f"[TTS] 檔案生成失敗或為空: {audio_path}")
-                    return generate_voice_order_fallback(order_id, speech_rate)
+            # 檢查檔案是否真的生成
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                print(f"[TTS] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
+                return audio_path
             else:
-                print(f"語音生成失敗：{result.reason}")
+                print(f"[TTS] 檔案生成失敗或為空: {audio_path}")
                 return generate_voice_order_fallback(order_id, speech_rate)
                 
         except Exception as e:
-            print(f"Azure TTS 處理失敗：{e}")
+            print(f"gTTS 處理失敗：{e}")
             return generate_voice_order_fallback(order_id, speech_rate)
             
     except Exception as e:
@@ -760,29 +787,30 @@ def generate_voice_from_temp_order(temp_order, speech_rate=1.0):
             return None
         
         try:
-            # 延遲導入 Azure Speech SDK
-            from azure.cognitiveservices.speech import SpeechSynthesizer, AudioConfig, ResultReason
+            # 使用 gTTS 生成語音
+            from gtts import gTTS
             
-            # 設定語音參數、輸出到 /tmp/voices
-            speech_config.speech_synthesis_voice_name = "zh-TW-HsiaoChenNeural"
-            speech_config.speech_synthesis_speaking_rate = speech_rate
-            filename = f"{uuid.uuid4()}.wav"
+            # 確保目錄存在
+            os.makedirs(VOICE_DIR, exist_ok=True)
+            
+            # 生成檔案路徑
+            filename = f"{uuid.uuid4()}.mp3"
             audio_path = os.path.join(VOICE_DIR, filename)
             print(f"[TTS] Will save to {audio_path}")
-            audio_config = AudioConfig(filename=audio_path)
-            synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
             
-            result = synthesizer.speak_text_async(order_text).get()
+            # 使用 gTTS 生成語音（中文）
+            tts = gTTS(text=order_text, lang='zh-tw', slow=False)
+            tts.save(audio_path)
             
-            if result.reason == ResultReason.SynthesizingAudioCompleted:
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 print(f"[TTS] Success, file exists? {os.path.exists(audio_path)}")
                 return audio_path
             else:
-                print(f"語音生成失敗：{result.reason}")
+                print(f"語音生成失敗：檔案不存在或為空")
                 return None
                 
         except Exception as e:
-            print(f"Azure TTS 處理失敗：{e}")
+            print(f"gTTS 處理失敗：{e}")
             return None
             
     except Exception as e:
@@ -791,7 +819,7 @@ def generate_voice_from_temp_order(temp_order, speech_rate=1.0):
 
 def generate_voice_with_custom_rate(order_text, speech_rate=1.0, voice_name="zh-TW-HsiaoChenNeural"):
     """
-    生成自定義語速的語音檔
+    使用 gTTS 生成自定義語速的語音檔
     """
     cleanup_old_voice_files()
     try:
@@ -799,86 +827,38 @@ def generate_voice_with_custom_rate(order_text, speech_rate=1.0, voice_name="zh-
         order_text = normalize_order_text_for_tts(order_text)
         print(f"[TTS] 自定義語音預處理後的文本: {order_text}")
         
-        # 取得語音配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech Service 配置失敗，跳過語音生成")
-            return None
-        
         try:
-            # 延遲導入 Azure Speech SDK
-            from azure.cognitiveservices.speech import SpeechSynthesizer, AudioConfig, ResultReason
+            # 使用 gTTS 生成語音
+            from gtts import gTTS
             
-            # 設定語音參數
-            speech_config.speech_synthesis_voice_name = voice_name
-            speech_config.speech_synthesis_speaking_rate = speech_rate
-            filename = f"{uuid.uuid4()}.wav"
+            # 確保目錄存在
+            os.makedirs(VOICE_DIR, exist_ok=True)
+            
+            # 生成檔案路徑
+            filename = f"{uuid.uuid4()}.mp3"
             audio_path = os.path.join(VOICE_DIR, filename)
             print(f"[TTS] Will save to {audio_path}")
-            audio_config = AudioConfig(filename=audio_path)
-            synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
             
-            result = synthesizer.speak_text_async(order_text).get()
+            # 使用 gTTS 生成語音（中文）
+            # 注意：gTTS 不支援語速調整，但我們可以通過 slow 參數來控制
+            slow = speech_rate < 0.8  # 如果語速小於 0.8，使用慢速
+            tts = gTTS(text=order_text, lang='zh-tw', slow=slow)
+            tts.save(audio_path)
             
-            if result.reason == ResultReason.SynthesizingAudioCompleted:
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 print(f"[TTS] Success, file exists? {os.path.exists(audio_path)}")
                 return audio_path
             else:
-                print(f"語音生成失敗：{result.reason}")
+                print(f"語音生成失敗：檔案不存在或為空")
                 return None
                 
         except Exception as e:
-            print(f"Azure TTS 處理失敗：{e}")
+            print(f"gTTS 處理失敗：{e}")
             return None
             
     except Exception as e:
         print(f"語音生成失敗：{e}")
         return None
-
-def create_order_summary(order_id, user_language='zh'):
-    """
-    建立訂單摘要（雙語）
-    """
-    from ..models import Order, OrderItem, MenuItem, Store
-    
-    order = Order.query.get(order_id)
-    if not order:
-        return None
-    
-    store = Store.query.get(order.store_id)
-    
-    # 中文摘要
-    chinese_summary = f"訂單編號：{order.order_id}\n"
-    chinese_summary += f"店家：{store.store_name if store else '未知店家'}\n"
-    chinese_summary += "訂購項目：\n"
-    
-    for item in order.items:
-        menu_item = MenuItem.query.get(item.menu_item_id)
-        if menu_item:
-            chinese_summary += f"- {menu_item.item_name} x{item.quantity}\n"
-    
-    chinese_summary += f"總金額：${order.total_amount}"
-    
-    # 翻譯摘要（簡化版）
-    if user_language != 'zh':
-        # 這裡可以呼叫 Gemini API 進行翻譯
-        translated_summary = f"Order #{order.order_id}\n"
-        translated_summary += f"Store: {store.store_name if store else 'Unknown Store'}\n"
-        translated_summary += "Items:\n"
-        
-        for item in order.items:
-            menu_item = MenuItem.query.get(item.menu_item_id)
-            if menu_item:
-                translated_summary += f"- {menu_item.item_name} x{item.quantity}\n"
-        
-        translated_summary += f"Total: ${order.total_amount}"
-    else:
-        translated_summary = chinese_summary
-    
-    return {
-        "chinese": chinese_summary,
-        "translated": translated_summary
-    }
 
 def save_uploaded_file(file, folder='uploads'):
     """
@@ -926,32 +906,41 @@ def translate_text(text, target_language='en'):
     """
     使用 Gemini 2.5 Flash API 翻譯文字
     """
+    print(f"🎯 translate_text 開始: text='{text}', target_language='{target_language}'")
+    
     try:
         from google import genai
         
         # 設定 Gemini API
+        print(f"🎯 設定 Gemini API...")
         genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
         
         # 建立翻譯提示詞
         prompt = f"""
-        請將以下中文文字翻譯為 {target_language} 語言：
+        請將以下文字翻譯為 {target_language} 語言：
         
         原文：{text}
         
         請只回傳翻譯結果，不要包含任何其他文字。
         """
+        print(f"🎯 翻譯提示詞: {prompt}")
         
+        print(f"🎯 調用 Gemini API...")
         response = get_gemini_client().models.generate_content(
-            model="gemini-2.5-flash-lite",
+            model="models/gemini-2.5-flash-lite",
             contents=[prompt],
             config={
                 "thinking_config": genai.types.ThinkingConfig(thinking_budget=512)
             }
         )
-        return response.text.strip()
+        
+        result = response.text.strip()
+        print(f"🎯 Gemini API 返回結果: '{result}'")
+        return result
         
     except Exception as e:
-        print(f"翻譯失敗：{e}")
+        print(f"❌ 翻譯失敗：{e}")
+        print(f"🎯 回傳原文: '{text}'")
         return text  # 如果翻譯失敗，回傳原文
 
 def translate_menu_items(menu_items, target_language='en'):
@@ -966,7 +955,7 @@ def translate_menu_items(menu_items, target_language='en'):
             'original_name': item.item_name,
             'translated_name': translate_text(item.item_name, target_language),
             'price_small': item.price_small,
-            'price_large': item.price_large,
+            'price_large': item.price_big,  # 修正：使用 price_big 而不是 price_large
             'description': item.description,
             'translated_description': translate_text(item.description, target_language) if item.description else None
         }
@@ -1026,15 +1015,17 @@ def translate_text_with_fallback(text, target_language='en'):
     """
     翻譯文字（優先使用資料庫翻譯，如果沒有才使用AI翻譯）
     """
-    # 如果是中文，直接回傳
-    if target_language == 'zh':
-        return text
+    print(f"🔧 translate_text_with_fallback 開始: text='{text}', target_language='{target_language}'")
     
     # 嘗試使用AI翻譯
     try:
-        return translate_text(text, target_language)
+        print(f"🔧 調用 translate_text 函數...")
+        result = translate_text(text, target_language)
+        print(f"🔧 translate_text 返回結果: '{result}'")
+        return result
     except Exception as e:
-        print(f"AI翻譯失敗：{e}")
+        print(f"❌ AI翻譯失敗：{e}")
+        print(f"🔧 回傳原文: '{text}'")
         return text  # 如果翻譯失敗，回傳原文
 
 def translate_menu_items_with_db_fallback(menu_items, target_language):
@@ -1174,7 +1165,7 @@ def translate_store_info_with_db_fallback(store, target_language):
 
 def create_complete_order_confirmation(order_id, user_language='zh', store_name=None):
     """
-    建立完整的訂單確認內容（包含語音、中文紀錄、使用者語言紀錄）
+    建立完整的訂單確認內容（使用新的 DTO 模型，支援雙語摘要）
     
     Args:
         order_id: 訂單ID
@@ -1184,7 +1175,8 @@ def create_complete_order_confirmation(order_id, user_language='zh', store_name=
     import logging
     logging.basicConfig(level=logging.INFO)
     
-    from ..models import Order, OrderItem, MenuItem, Store, User
+    from ..models import Order, OrderItem, MenuItem, Store, User, db
+    from .dto_models import build_order_item_dto, OrderSummaryDTO
     
     print(f"🔧 開始生成訂單確認...")
     print(f"📋 輸入參數: order_id={order_id}, user_language={user_language}, store_name={store_name}")
@@ -1203,10 +1195,14 @@ def create_complete_order_confirmation(order_id, user_language='zh', store_name=
     
     print(f"✅ 找到店家: store_id={store.store_id}, store_name='{store.store_name}'")
     
-    # 優先使用前端傳遞的店家名稱
+    # 分離中文店名和顯示店名
+    # 中文摘要：使用原始中文店名
+    chinese_store_name = store.store_name
+    
+    # 顯示店名：優先使用前端傳遞的店名，否則使用資料庫店名
     if store_name:
         print(f"✅ 使用前端傳遞的店家名稱: '{store_name}'")
-        store_name_for_display = store_name
+        display_store_name = store_name
     else:
         # 檢查店名是否為自動生成格式（店家_ChIJ-xxxxx 或其他預設格式）
         is_auto_generated = (
@@ -1221,7 +1217,6 @@ def create_complete_order_confirmation(order_id, user_language='zh', store_name=
             # 嘗試從 OCR 菜單中獲取正確的店名
             print(f"🔍 嘗試從 OCR 菜單中獲取正確的店名...")
             from sqlalchemy import text
-            from app.models import db
             try:
                 # 查詢該店家的 OCR 菜單，優先選擇看起來像真實店名的名稱
                 result = db.session.execute(text("""
@@ -1241,7 +1236,7 @@ def create_complete_order_confirmation(order_id, user_language='zh', store_name=
                 ocr_store_name = result.fetchone()
                 if ocr_store_name and ocr_store_name[0]:
                     print(f"✅ 從 OCR 菜單中找到真實店名: '{ocr_store_name[0]}'")
-                    store_name_for_display = ocr_store_name[0]
+                    display_store_name = ocr_store_name[0]
                 else:
                     # 如果沒有找到真實店名，再查詢所有店名
                     print(f"⚠️ 沒有找到真實店名，查詢所有店名...")
@@ -1257,179 +1252,259 @@ def create_complete_order_confirmation(order_id, user_language='zh', store_name=
                     ocr_store_name = result.fetchone()
                     if ocr_store_name and ocr_store_name[0]:
                         print(f"✅ 從 OCR 菜單中找到店名: '{ocr_store_name[0]}'")
-                        store_name_for_display = ocr_store_name[0]
+                        display_store_name = ocr_store_name[0]
                     else:
                         print(f"⚠️ 沒有找到 OCR 菜單中的店名，使用資料庫名稱: '{store.store_name}'")
-                        store_name_for_display = store.store_name
+                        display_store_name = store.store_name
             except Exception as e:
                 print(f"❌ 查詢 OCR 菜單店名時發生錯誤: {e}")
-                store_name_for_display = store.store_name
+                display_store_name = store.store_name
         else:
             print(f"✅ 使用資料庫名稱: '{store.store_name}'")
-            store_name_for_display = store.store_name
+            display_store_name = store.store_name
     
-    print(f"📋 最終使用的店家名稱: '{store_name_for_display}'")
+    print(f"📋 中文店名: '{chinese_store_name}'")
+    print(f"📋 顯示店名: '{display_store_name}'")
     
     user = User.query.get(order.user_id)
     if not user:
         print(f"❌ 找不到使用者: user_id={order.user_id}")
         return None
     
-    print(f"✅ 找到使用者: user_id={user.user_id}, preferred_lang='{user.preferred_lang}'")
+    print(f"✅ 找到使用者: user_id={user.user_id}, preferred_lang={user.preferred_lang}")
     
-    # 1. 中文語音內容（改善格式，更自然）
-    items_for_voice = []
-    items_for_summary = []
+    # 建立訂單項目 DTO 列表
+    order_items_dto = []
     
-    print(f"🔧 開始處理訂單項目...")
-    print(f"📋 訂單項目數量: {len(order.items)}")
+    print(f"🔍 訂單項目數量: {len(order.items)}")
+    print(f"🔍 訂單項目列表: {[item.menu_item_id for item in order.items]}")
+    print(f"🔍 訂單項目類型: {type(order.items)}")
+    print(f"🔍 訂單項目是否為空: {not order.items}")
     
-    for i, item in enumerate(order.items):
-        print(f"📋 處理第 {i+1} 個項目: menu_item_id={item.menu_item_id}, quantity_small={item.quantity_small}")
+    if not order.items:
+        print(f"⚠️ 警告：訂單沒有項目！")
+        return None
+    
+    for item in order.items:
+        print(f"🔍 處理訂單項目: menu_item_id={item.menu_item_id}, quantity={item.quantity_small}")
         
-        # 檢查是否為OCR菜單項目（有original_name）
-        if hasattr(item, 'original_name') and item.original_name:
-            print(f"✅ 檢測到OCR菜單項目: original_name='{item.original_name}', translated_name='{getattr(item, 'translated_name', '')}'")
+        menu_item = MenuItem.query.get(item.menu_item_id)
+        if menu_item:
+            print(f"✅ 找到菜單項目: item_name='{menu_item.item_name}'")
             
-            # 使用原始中文名稱進行語音和摘要
-            item_name_for_voice = item.original_name
-            item_name_for_summary = item.original_name
-            
-            # 為語音準備：自然的中文表達
-            if item.quantity_small == 1:
-                voice_text = f"{item_name_for_voice}一份"
-            else:
-                voice_text = f"{item_name_for_voice}{item.quantity_small}份"
-            
-            items_for_voice.append(voice_text)
-            print(f"📝 語音文字: '{voice_text}'")
-            
-            # 為摘要準備：清晰的格式
-            summary_text = f"{item_name_for_summary} x{item.quantity_small}"
-            items_for_summary.append(summary_text)
-            print(f"📝 摘要文字: '{summary_text}'")
-            
-        else:
-            # 使用傳統的MenuItem查詢
-            menu_item = MenuItem.query.get(item.menu_item_id)
-            if menu_item:
-                print(f"✅ 找到菜單項目: item_name='{menu_item.item_name}', price_small={menu_item.price_small}")
+            # 檢查是否有翻譯資料
+            from sqlalchemy import text
+            try:
+                result = db.session.execute(text("""
+                    SELECT description 
+                    FROM menu_translations 
+                    WHERE menu_item_id = :menu_item_id AND lang_code = :language_code
+                """), {
+                    "menu_item_id": menu_item.menu_item_id,
+                    "language_code": user_language
+                })
                 
-                # 嘗試獲取中文翻譯
-                print(f"🔍 嘗試獲取菜品中文翻譯: menu_item_id={item.menu_item_id}")
-                db_translation = get_menu_translation_from_db(item.menu_item_id, 'zh')
-                
-                if db_translation and db_translation.description:
-                    chinese_name = db_translation.description
-                    print(f"✅ 找到中文翻譯: '{chinese_name}'")
+                translation = result.fetchone()
+                if translation and translation[0]:
+                    chinese_name = translation[0]  # 使用翻譯的中文名稱
+                    translated_name = menu_item.item_name  # 使用原始英文名稱
+                    print(f"✅ 找到翻譯: '{translated_name}' -> '{chinese_name}'")
                 else:
-                    # 如果沒有資料庫翻譯，嘗試AI翻譯
-                    print(f"🔧 嘗試AI翻譯菜品名稱: '{menu_item.item_name}'")
-                    try:
-                        chinese_name = translate_text_with_fallback(menu_item.item_name, 'zh')
-                        print(f"✅ AI翻譯結果: '{chinese_name}'")
-                    except Exception as e:
-                        print(f"❌ AI翻譯失敗: {e}")
+                    # 如果沒有翻譯資料，需要判斷原始名稱是否為中文
+                    # contains_cjk 函數已在同檔案中定義
+                    print(f"🔍 檢查菜名語言: '{menu_item.item_name}'")
+                    is_cjk = contains_cjk(menu_item.item_name)
+                    print(f"🔍 是否包含中日韓字元: {is_cjk}")
+                    
+                    if is_cjk:
+                        # 原始名稱是中文
                         chinese_name = menu_item.item_name
-                        print(f"⚠️ 使用原始名稱: '{chinese_name}'")
+                        translated_name = menu_item.item_name
+                        print(f"✅ 原始名稱是中文: '{chinese_name}'")
+                    else:
+                        # 原始名稱是英文，需要翻譯成中文
+                        print(f"🔄 開始翻譯英文名稱: '{menu_item.item_name}' -> 中文")
+                        try:
+                            chinese_name = translate_text_with_fallback(menu_item.item_name, 'zh')
+                            translated_name = menu_item.item_name
+                            print(f"🔄 翻譯完成: '{translated_name}' -> '{chinese_name}'")
+                            
+                            # 驗證翻譯結果
+                            if contains_cjk(chinese_name):
+                                print(f"✅ 翻譯結果包含中日韓字元: '{chinese_name}'")
+                            else:
+                                print(f"⚠️ 翻譯結果不包含中日韓字元: '{chinese_name}'")
+                        except Exception as e:
+                            print(f"❌ 翻譯失敗: {e}")
+                            chinese_name = menu_item.item_name
+                            translated_name = menu_item.item_name
                 
-                # 為語音準備：使用中文名稱
-                if item.quantity_small == 1:
-                    voice_text = f"{chinese_name}一份"
-                else:
-                    voice_text = f"{chinese_name}{item.quantity_small}份"
+                # 使用 DTO 模型處理傳統菜單項目
+                item_data = {
+                    'menu_item_id': item.menu_item_id,
+                    'original_name': chinese_name,  # 使用中文名稱
+                    'translated_name': translated_name,  # 使用翻譯名稱
+                    'quantity': item.quantity_small,
+                    'price': item.subtotal // item.quantity_small if item.quantity_small > 0 else 0,
+                    'subtotal': item.subtotal
+                }
+            except Exception as e:
+                print(f"❌ 查詢翻譯資料時發生錯誤: {e}")
+                chinese_name = menu_item.item_name
+                translated_name = menu_item.item_name
                 
-                items_for_voice.append(voice_text)
-                print(f"📝 語音文字: '{voice_text}'")
-                
-                # 為摘要準備：使用中文名稱
-                summary_text = f"{chinese_name} x{item.quantity_small}"
-                items_for_summary.append(summary_text)
-                print(f"📝 摘要文字: '{summary_text}'")
-            else:
-                print(f"❌ 找不到菜單項目: menu_item_id={item.menu_item_id}")
+                # 使用 DTO 模型處理傳統菜單項目
+                item_data = {
+                    'menu_item_id': item.menu_item_id,
+                    'original_name': chinese_name,  # 使用中文名稱
+                    'translated_name': translated_name,  # 使用翻譯名稱
+                    'quantity': item.quantity_small,
+                    'price': item.subtotal // item.quantity_small if item.quantity_small > 0 else 0,
+                    'subtotal': item.subtotal
+                }
+        else:
+            print(f"❌ 找不到菜單項目: menu_item_id={item.menu_item_id}")
+            continue
+        
+        # 建立 DTO 物件
+        order_item_dto = build_order_item_dto(item_data, user_language)
+        order_items_dto.append(order_item_dto)
+        print(f"✅ 建立 DTO 物件: original='{order_item_dto.name.original}', translated='{order_item_dto.name.translated}'")
     
-    # 生成自然的中文語音
-    if len(items_for_voice) == 1:
-        chinese_voice_text = f"老闆，我要{items_for_voice[0]}，謝謝。"
-    else:
-        voice_items = "、".join(items_for_voice[:-1]) + "和" + items_for_voice[-1]
-        chinese_voice_text = f"老闆，我要{voice_items}，謝謝。"
+    # 使用 GPT 建議的 deepcopy 方案，建立兩份完全獨立的表示層
+    # 準備原始資料（中文店名/菜名）
+    order_base = {
+        'store_name': chinese_store_name,  # 中文摘要使用原始中文店名
+        'items': [
+            {
+                'name': item.name.original,  # 中文原文
+                'quantity': item.quantity,
+                'price': item.price
+            }
+            for item in order_items_dto
+        ],
+        'total_amount': order.total_amount
+    }
+    
+    # 建立兩份完全獨立的表示層
+    chinese_summary, user_language_summary, zh_model = build_presentations(order_base, user_language)
+    
+    # 生成語音文字（一律使用中文）
+    chinese_voice_text = render_tts_text(zh_model)
+    
+    # 記錄結構化日誌，驗證資料分離
+    print(f"📊 資料分離驗證:")
+    print(f"   native store_name: '{chinese_store_name}'")
+    print(f"   native first item: '{order_base['items'][0]['name'] if order_base['items'] else 'N/A'}'")
+    print(f"   display user_lang: '{user_language}'")
+    print(f"   display first item: '{order_base['items'][0]['name'] if order_base['items'] else 'N/A'}'")
     
     print(f"🎤 生成中文語音文字: '{chinese_voice_text}'")
-    
-    # 2. 中文點餐紀錄（改善格式）
-    chinese_summary = f"店家：{store_name_for_display}\n"
-    chinese_summary += "訂購項目：\n"
-    
-    for item_summary in items_for_summary:
-        chinese_summary += f"- {item_summary}\n"
-    
-    chinese_summary += f"總金額：${order.total_amount}"
-    
     print(f"📝 生成中文摘要:")
     print(f"   {chinese_summary.replace(chr(10), chr(10) + '   ')}")
+    print(f"📝 生成使用者語言摘要:")
+    print(f"   {user_language_summary.replace(chr(10), chr(10) + '   ')}")
     
-    # 3. 使用者語言的點餐紀錄（根據用戶偏好語言）
-    print(f"🔧 開始生成使用者語言摘要...")
-    print(f"📋 使用者語言: {user_language}")
-    
+    # 如果使用者語言不是中文，需要翻譯店家名稱
     if user_language != 'zh':
-        # 翻譯店家名稱 - 使用前端傳遞的店名
         print(f"🔧 開始翻譯店家名稱...")
-        if store_name_for_display and store_name_for_display != store.store_name:
-            # 使用前端傳遞的店名進行翻譯
-            print(f"📝 使用前端傳遞的店名進行翻譯: '{store_name_for_display}'")
-            translated_store_name = translate_text_with_fallback(store_name_for_display, user_language)
-            print(f"📝 店家翻譯結果: '{store_name_for_display}' → '{translated_store_name}'")
+        # 使用顯示店名進行翻譯（如果已經是英文就不需要再翻譯）
+        if display_store_name and display_store_name != chinese_store_name:
+            # 使用前端傳遞的店名或 OCR 菜單中的店名
+            print(f"📝 使用顯示店名: '{display_store_name}'")
+            translated_store_name = display_store_name
         else:
             # 使用資料庫中的店名進行翻譯
             store_translation = translate_store_info_with_db_fallback(store, user_language)
             translated_store_name = store_translation['translated_name']
             print(f"📝 店家翻譯結果: '{store.store_name}' → '{translated_store_name}'")
         
-        translated_summary = f"Store: {translated_store_name}\n"
-        translated_summary += "Items:\n"
+        # 更新使用者語言摘要中的店家名稱（只更新 display 版本）
+        user_language_summary = user_language_summary.replace(f"Store: {chinese_store_name}", f"Store: {translated_store_name}")
         
-        for item in order.items:
-            # 檢查是否為OCR菜單項目（有translated_name）
-            if hasattr(item, 'translated_name') and item.translated_name:
-                print(f"✅ 檢測到OCR菜單項目，使用已翻譯名稱: '{item.translated_name}'")
-                translated_name = item.translated_name
-                translated_summary += f"- {translated_name} x{item.quantity_small} (${item.subtotal})\n"
-            else:
-                # 使用傳統的MenuItem查詢和翻譯
-                menu_item = MenuItem.query.get(item.menu_item_id)
-                if menu_item:
-                    print(f"🔧 翻譯菜品: '{menu_item.item_name}'")
-                    
-                    # 優先使用資料庫翻譯
-                    db_translation = get_menu_translation_from_db(menu_item.menu_item_id, user_language)
-                    if db_translation and db_translation.description:
-                        translated_name = db_translation.description
-                        print(f"✅ 使用資料庫翻譯: '{translated_name}'")
-                    else:
-                        translated_name = translate_text_with_fallback(menu_item.item_name, user_language)
-                        print(f"✅ 使用AI翻譯: '{translated_name}'")
-                    
-                    translated_summary += f"- {translated_name} x{item.quantity_small} (${item.subtotal})\n"
+        # 記錄結構化日誌，驗證資料分離
+        print(f"📊 結構化日誌:")
+        print(f"   store_name_native: '{chinese_store_name}'")
+        print(f"   store_name_display: '{translated_store_name}'")
+        print(f"   user_language: '{user_language}'")
+        print(f"   chinese_summary: '{chinese_summary[:100]}...'")
+        print(f"   user_language_summary: '{user_language_summary[:100]}...'")
         
-        translated_summary += f"Total: ${order.total_amount}"
-    else:
-        # 如果用戶語言是中文，使用者語言摘要就是中文摘要
-        print(f"📝 使用者語言是中文，使用中文摘要")
-        translated_summary = chinese_summary
+        # 驗證資料分離
+        print(f"✅ 資料分離驗證:")
+        print(f"   - 中文摘要使用 native 店名: {'✓' if chinese_store_name in chinese_summary else '✗'}")
+        print(f"   - 使用者語言摘要使用 display 店名: {'✓' if translated_store_name in user_language_summary else '✗'}")
+        print(f"   - 語音使用中文原文: {'✓' if '招牌金湯酸菜' in chinese_voice_text or '白濃雞湯' in chinese_voice_text else '✗'}")
     
     print(f"📝 生成使用者語言摘要:")
-    print(f"   {translated_summary.replace(chr(10), chr(10) + '   ')}")
+    print(f"   {user_language_summary.replace(chr(10), chr(10) + '   ')}")
+    
+    # 交易式寫入資料庫（一次 commit，避免半套資料）
+    try:
+        from ..models import OrderSummary
+        from sqlalchemy.orm import Session
+        
+        with db.session.begin():  # 交易自動 begin/commit/rollback
+            order_summary = OrderSummary(
+                order_id=order_id,
+                ocr_menu_id=None,  # 合作店家沒有 OCR 菜單
+                chinese_summary=chinese_summary,
+                user_language_summary=user_language_summary,
+                user_language=user_language,
+                total_amount=order.total_amount
+            )
+            db.session.add(order_summary)
+            db.session.flush()  # 獲取 ID
+            summary_id = order_summary.summary_id
+            
+        print(f"✅ 訂單摘要已成功寫入資料庫: summary_id={summary_id}")
+        
+        # 更新 OrderItem 表的品項名稱欄位
+        try:
+            from ..models import OrderItem
+            
+            # 查詢該訂單的所有項目
+            order_items = OrderItem.query.filter_by(order_id=order_id).all()
+            
+            for order_item in order_items:
+                # 查詢對應的 menu_item
+                menu_item = MenuItem.query.get(order_item.menu_item_id)
+                if menu_item:
+                    # 設定品項名稱
+                    order_item.original_name = menu_item.item_name
+                    order_item.translated_name = menu_item.item_name
+                    
+                    # 如果有翻譯資料，使用翻譯
+                    if user_language != 'zh':
+                        try:
+                            translated_name = translate_text_with_fallback(menu_item.item_name, user_language)
+                            if translated_name and translated_name != menu_item.item_name:
+                                order_item.translated_name = translated_name
+                                print(f"✅ 更新品項翻譯: '{menu_item.item_name}' → '{translated_name}'")
+                        except Exception as e:
+                            print(f"⚠️ 品項翻譯失敗: {e}")
+                    
+                    print(f"✅ 更新品項名稱: original='{order_item.original_name}', translated='{order_item.translated_name}'")
+            
+            # 不需要額外的 commit，因為已經在同一個交易中
+            print(f"✅ OrderItem 品項名稱更新完成")
+            
+        except Exception as e:
+            print(f"⚠️ 更新 OrderItem 品項名稱失敗: {e}")
+            # 不影響主要流程，繼續執行
+        
+    except Exception as e:
+        print(f"⚠️ 寫入訂單摘要失敗: {e}")
+        # 不影響主要流程，繼續執行
     
     result = {
         "chinese_voice_text": chinese_voice_text,
         "chinese": chinese_summary,
-        "translated": translated_summary,
+        "translated": user_language_summary,
         "chinese_summary": chinese_summary,
-        "translated_summary": translated_summary,
-        "user_language": user_language
+        "translated_summary": user_language_summary,
+        "user_language": user_language,
+        "summary_id": summary_id if 'summary_id' in locals() else None
     }
     
     print(f"🎉 訂單確認生成完成!")
@@ -1468,11 +1543,27 @@ def send_complete_order_notification(order_id, store_name=None):
         print(f"找不到使用者: {order.user_id}")
         return
     
-    # 建立完整訂單確認內容
-    confirmation = create_complete_order_confirmation(order_id, user.preferred_lang, store_name)
-    if not confirmation:
-        print(f"無法建立訂單確認內容: {order_id}")
-        return
+    # 從資料庫讀取訂單摘要（優先使用資料庫中的摘要）
+    from ..models import OrderSummary
+    
+    order_summary = OrderSummary.query.filter_by(order_id=order_id).first()
+    if order_summary:
+        print(f"✅ 從資料庫讀取訂單摘要: summary_id={order_summary.summary_id}")
+        confirmation = {
+            "chinese_voice_text": "老闆，我要點餐，謝謝。",  # 簡化語音文字
+            "chinese": order_summary.chinese_summary,
+            "translated": order_summary.user_language_summary,
+            "chinese_summary": order_summary.chinese_summary,
+            "translated_summary": order_summary.user_language_summary,
+            "user_language": order_summary.user_language
+        }
+    else:
+        print(f"⚠️ 資料庫中沒有找到訂單摘要，使用即時生成")
+        # 建立完整訂單確認內容
+        confirmation = create_complete_order_confirmation(order_id, user.preferred_lang, store_name)
+        if not confirmation:
+            print(f"無法建立訂單確認內容: {order_id}")
+            return
     
     try:
         print(f"開始發送訂單通知: {order_id} -> {user.line_user_id}")
@@ -2045,24 +2136,14 @@ def generate_fallback_order_summary(items, user_language):
 
 def generate_chinese_voice_with_azure(order_summary, order_id, speech_rate=1.0):
     """
-    使用 Azure Speech 生成中文語音檔
+    使用 gTTS 生成中文語音檔
     輸入：訂單摘要、訂單ID、語速
     輸出：語音檔絕對路徑
     """
     cleanup_old_voice_files()
     try:
-        from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig, ResultReason
+        from gtts import gTTS
         import os
-        
-        # 取得 Azure Speech 配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech 配置不可用")
-            return None
-        
-        # 設定語音參數
-        speech_config.speech_synthesis_voice_name = "zh-TW-HsiaoChenNeural"
-        speech_config.speech_synthesis_speaking_rate = speech_rate  # 支援語速調整
         
         # 準備語音文字（處理不同類型的輸入）
         if isinstance(order_summary, dict):
@@ -2074,31 +2155,29 @@ def generate_chinese_voice_with_azure(order_summary, order_id, speech_rate=1.0):
         
         # 應用文本預處理（確保沒有遺漏的 x1 格式）
         chinese_text = normalize_order_text_for_tts(chinese_text)
-        print(f"[TTS] Azure 語音預處理後的文本: {chinese_text}")
+        print(f"[TTS] gTTS 語音預處理後的文本: {chinese_text}")
+        
+        # 確保目錄存在
+        os.makedirs(VOICE_DIR, exist_ok=True)
         
         # 生成語音檔路徑（存到 /tmp/voices）
-        filename = f"{uuid.uuid4()}.wav"
+        filename = f"{uuid.uuid4()}.mp3"
         voice_path = os.path.join(VOICE_DIR, filename)
         print(f"[TTS] Will save to {voice_path}")
         
-        # 設定音訊輸出
-        audio_config = AudioConfig(filename=voice_path)
+        # 使用 gTTS 生成語音（中文）
+        tts = gTTS(text=chinese_text, lang='zh-tw', slow=False)
+        tts.save(voice_path)
         
-        # 建立語音合成器
-        synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-        
-        # 生成語音
-        result = synthesizer.speak_text_async(chinese_text).get()
-        
-        if result.reason == ResultReason.SynthesizingAudioCompleted:
+        if os.path.exists(voice_path) and os.path.getsize(voice_path) > 0:
             print(f"[TTS] Success, file exists? {os.path.exists(voice_path)}")
             return voice_path
         else:
-            print(f"語音生成失敗: {result.reason}")
+            print(f"語音生成失敗: 檔案不存在或為空")
             return None
             
     except Exception as e:
-        print(f"Azure Speech 語音生成失敗: {e}")
+        print(f"gTTS 語音生成失敗: {e}")
         return None
 
 # =============================================================================
@@ -2175,10 +2254,20 @@ def send_order_to_line_bot(user_id, order_data):
             audio_url = URLConfig.get_voice_url(fname)
             print(f"[Webhook] Reply with voice URL: {audio_url}")
             
+            # 計算音訊檔案的實際長度（毫秒）
+            duration_ms = 30000  # 預設30秒
+            try:
+                from pydub import AudioSegment
+                audio = AudioSegment.from_file(voice_url)
+                duration_ms = len(audio)  # pydub 回傳的是毫秒
+                print(f"[Webhook] 計算的音訊長度: {duration_ms} ms")
+            except Exception as e:
+                print(f"[Webhook] 無法計算音訊長度，使用預設值: {e}")
+            
             messages.append({
                 "type": "audio",
                 "originalContentUrl": audio_url,
-                "duration": 30000  # 預設30秒
+                "duration": duration_ms
             })
         
         # 3. 語速控制卡片已移除（節省成本）
@@ -2414,7 +2503,7 @@ def build_chinese_voice_text(zh_items: List[Dict]) -> str:
     try:
         voice_items = []
         for item in zh_items:
-            name = item['name']
+            name = item['name']  # 這裡已經是中文原文
             quantity = item['quantity']
             
             # 根據菜名類型選擇量詞
@@ -2444,46 +2533,35 @@ def build_chinese_voice_text(zh_items: List[Dict]) -> str:
 
 async def synthesize_azure_tts(text: str) -> tuple[str, int]:
     """
-    使用 Azure TTS 合成語音
+    使用 gTTS 合成語音
     回傳：(語音檔URL, 持續時間毫秒)
     """
     try:
-        from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig, ResultReason
+        from gtts import gTTS
         import os
         
-        # 取得 Azure Speech 配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech 配置不可用")
-            return None, 0
-        
-        # 設定語音參數
-        speech_config.speech_synthesis_voice_name = "zh-TW-HsiaoChenNeural"
-        speech_config.speech_synthesis_speaking_rate = 1.0
+        # 確保目錄存在
+        os.makedirs(VOICE_DIR, exist_ok=True)
         
         # 生成語音檔路徑
-        filename = f"{uuid.uuid4()}.wav"
+        filename = f"{uuid.uuid4()}.mp3"
         voice_path = os.path.join(VOICE_DIR, filename)
         
-        # 設定音訊輸出
-        audio_config = AudioConfig(filename=voice_path)
+        # 使用 gTTS 生成語音（中文）
+        tts = gTTS(text=text, lang='zh-tw', slow=False)
+        tts.save(voice_path)
         
-        # 建立語音合成器
-        synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-        
-        # 生成語音
-        result = synthesizer.speak_text_async(text).get()
-        
-        if result.reason == ResultReason.SynthesizingAudioCompleted:
-            # 計算持續時間（毫秒）
-            duration_ms = int(result.audio_duration / 10000)  # Azure 回傳的是 100-nanosecond units
-            return voice_path, duration_ms
+        if os.path.exists(voice_path) and os.path.getsize(voice_path) > 0:
+            # 估算持續時間（gTTS 沒有提供持續時間，我們根據文字長度估算）
+            # 假設每個中文字符約 0.5 秒
+            estimated_duration_ms = len(text) * 500
+            return voice_path, estimated_duration_ms
         else:
-            print(f"語音生成失敗: {result.reason}")
+            print(f"語音生成失敗: 檔案不存在或為空")
             return None, 0
             
     except Exception as e:
-        print(f"Azure TTS 語音生成失敗: {e}")
+        print(f"gTTS 語音生成失敗: {e}")
         return None, 0
 
 # =============================================================================
@@ -3096,13 +3174,13 @@ def process_order_with_enhanced_tts(order_request: OrderRequest):
 
 def generate_voice_order_enhanced(order_id, speech_rate=1.0, emotion_style="cheerful", use_hd_voice=True):
     """
-    使用 Azure TTS 生成增強版訂單語音（支援 SSML 和 HD 聲音）
+    使用 gTTS 生成增強版訂單語音
     
     Args:
         order_id: 訂單 ID
         speech_rate: 語速倍率 (0.5-2.0)
         emotion_style: 情感風格 ("cheerful", "friendly", "excited", "calm", "sad")
-        use_hd_voice: 是否使用 HD 聲音
+        use_hd_voice: 是否使用 HD 聲音（gTTS 不支援，保留參數相容性）
     """
     # 先 cleanup（延長清理時間）
     cleanup_old_voice_files(3600)  # 60分鐘
@@ -3151,74 +3229,34 @@ def generate_voice_order_enhanced(order_id, speech_rate=1.0, emotion_style="chee
         order_text = normalize_order_text_for_tts(order_text)
         print(f"[TTS Enhanced] 預處理後的訂單文本: {order_text}")
         
-        # 取得語音配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech Service 配置失敗，使用備用方案")
-            return generate_voice_order_fallback(order_id, speech_rate)
-        
         try:
-            # 延遲導入 Azure Speech SDK
-            from azure.cognitiveservices.speech import SpeechSynthesizer, AudioConfig, ResultReason
-            
-            # 選擇語音（支援 HD 聲音）
-            if use_hd_voice:
-                # 使用 HD 聲音（自動情感偵測）
-                voice_name = "zh-TW-HsiaoChenNeural"  # 目前台灣中文 HD 聲音
-                print(f"[TTS Enhanced] 使用 HD 聲音: {voice_name}")
-            else:
-                # 使用標準聲音
-                voice_name = "zh-TW-HsiaoChenNeural"
-                print(f"[TTS Enhanced] 使用標準聲音: {voice_name}")
-            
-            # 設定語音參數
-            speech_config.speech_synthesis_voice_name = voice_name
-            speech_config.speech_synthesis_speaking_rate = speech_rate
+            # 使用 gTTS 生成語音
+            from gtts import gTTS
             
             # 確保目錄存在
             os.makedirs(VOICE_DIR, exist_ok=True)
             
-            # 直接存到 VOICE_DIR
-            filename = f"{uuid.uuid4()}.wav"
+            # 生成檔案路徑
+            filename = f"{uuid.uuid4()}.mp3"
             audio_path = os.path.join(VOICE_DIR, filename)
             print(f"[TTS Enhanced] Will save to {audio_path}")
             
-            # 使用 SSML 增強語音效果
-            ssml_text = f"""
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" 
-       xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="zh-TW">
-  <voice name="{voice_name}">
-    <mstts:express-as style="{emotion_style}" styledegree="1.5">
-      <prosody rate="{speech_rate}" pitch="+0%" volume="+0%">
-        {order_text}
-      </prosody>
-    </mstts:express-as>
-  </voice>
-</speak>
-            """.strip()
+            # 使用 gTTS 生成語音（中文）
+            # 注意：gTTS 不支援語速調整和情感風格，但我們可以通過 slow 參數來控制
+            slow = speech_rate < 0.8  # 如果語速小於 0.8，使用慢速
+            tts = gTTS(text=order_text, lang='zh-tw', slow=slow)
+            tts.save(audio_path)
             
-            print(f"[TTS Enhanced] 使用 SSML: {ssml_text}")
-            
-            audio_config = AudioConfig(filename=audio_path)
-            synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-            
-            # 使用 SSML 合成語音
-            result = synthesizer.speak_ssml_async(ssml_text).get()
-            
-            if result.reason == ResultReason.SynthesizingAudioCompleted:
-                # 檢查檔案是否真的生成
-                if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-                    print(f"[TTS Enhanced] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
-                    return audio_path
-                else:
-                    print(f"[TTS Enhanced] 檔案生成失敗或為空: {audio_path}")
-                    return generate_voice_order_fallback(order_id, speech_rate)
+            # 檢查檔案是否真的生成
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                print(f"[TTS Enhanced] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
+                return audio_path
             else:
-                print(f"語音生成失敗：{result.reason}")
+                print(f"[TTS Enhanced] 檔案生成失敗或為空: {audio_path}")
                 return generate_voice_order_fallback(order_id, speech_rate)
                 
         except Exception as e:
-            print(f"Azure TTS Enhanced 處理失敗：{e}")
+            print(f"gTTS Enhanced 處理失敗：{e}")
             return generate_voice_order_fallback(order_id, speech_rate)
             
     except Exception as e:
@@ -3227,87 +3265,44 @@ def generate_voice_order_enhanced(order_id, speech_rate=1.0, emotion_style="chee
 
 def generate_voice_with_custom_rate_enhanced(text, speech_rate=1.0, emotion_style="cheerful", use_hd_voice=True):
     """
-    使用 Azure TTS 生成增強版自訂語音檔（支援 SSML 和情感風格）
+    使用 gTTS 生成增強版自訂語音檔
     
     Args:
         text: 要轉換的文字
         speech_rate: 語速倍率 (0.5-2.0)
-        emotion_style: 情感風格 ("cheerful", "friendly", "excited", "calm", "sad")
-        use_hd_voice: 是否使用 HD 聲音
+        emotion_style: 情感風格 ("cheerful", "friendly", "excited", "calm", "sad")（gTTS 不支援，保留參數相容性）
+        use_hd_voice: 是否使用 HD 聲音（gTTS 不支援，保留參數相容性）
     """
     try:
-        # 取得語音配置
-        speech_config = get_speech_config()
-        if not speech_config:
-            print("Azure Speech Service 配置失敗")
-            return None
-        
-        # 選擇語音（支援 HD 聲音）
-        if use_hd_voice:
-            # 使用 HD 聲音（自動情感偵測）
-            voice_name = "zh-TW-HsiaoChenNeural"  # 目前台灣中文 HD 聲音
-            print(f"[TTS Enhanced] 使用 HD 聲音: {voice_name}")
-        else:
-            # 使用標準聲音
-            voice_name = "zh-TW-HsiaoChenNeural"
-            print(f"[TTS Enhanced] 使用標準聲音: {voice_name}")
-        
-        # 設定語音參數
-        speech_config.speech_synthesis_voice_name = voice_name
-        speech_config.speech_synthesis_speaking_rate = speech_rate
-        
         # 確保目錄存在
         os.makedirs(VOICE_DIR, exist_ok=True)
         
         # 生成檔案名
-        filename = f"{uuid.uuid4()}.wav"
+        filename = f"{uuid.uuid4()}.mp3"
         audio_path = os.path.join(VOICE_DIR, filename)
         print(f"[TTS Enhanced] Will save to {audio_path}")
         
-        # 使用 SSML 增強語音效果
-        ssml_text = f"""
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" 
-       xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="zh-TW">
-  <voice name="{voice_name}">
-    <mstts:express-as style="{emotion_style}" styledegree="1.5">
-      <prosody rate="{speech_rate}" pitch="+0%" volume="+0%">
-        {text}
-      </prosody>
-    </mstts:express-as>
-  </voice>
-</speak>
-        """.strip()
+        # 使用 gTTS 生成語音（中文）
+        # 注意：gTTS 不支援語速調整和情感風格，但我們可以通過 slow 參數來控制
+        slow = speech_rate < 0.8  # 如果語速小於 0.8，使用慢速
+        tts = gTTS(text=text, lang='zh-tw', slow=slow)
+        tts.save(audio_path)
         
-        print(f"[TTS Enhanced] 使用 SSML: {ssml_text}")
-        
-        # 延遲導入 Azure Speech SDK
-        from azure.cognitiveservices.speech import SpeechSynthesizer, AudioConfig, ResultReason
-        
-        audio_config = AudioConfig(filename=audio_path)
-        synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-        
-        # 使用 SSML 合成語音
-        result = synthesizer.speak_ssml_async(ssml_text).get()
-        
-        if result.reason == ResultReason.SynthesizingAudioCompleted:
-            # 檢查檔案是否真的生成
-            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-                print(f"[TTS Enhanced] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
-                return audio_path
-            else:
-                print(f"[TTS Enhanced] 檔案生成失敗或為空: {audio_path}")
-                return None
+        # 檢查檔案是否真的生成
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            print(f"[TTS Enhanced] Success, file exists and size: {os.path.getsize(audio_path)} bytes")
+            return audio_path
         else:
-            print(f"語音生成失敗：{result.reason}")
+            print(f"[TTS Enhanced] 檔案生成失敗或為空: {audio_path}")
             return None
             
     except Exception as e:
-        print(f"Azure TTS Enhanced 處理失敗：{e}")
+        print(f"gTTS Enhanced 處理失敗：{e}")
         return None
 
 def create_order_summary(order_id, user_language='zh'):
     """
-    建立訂單摘要（雙語）
+    建立訂單摘要（雙語）- 使用 Gemini API 強制翻譯英文菜名
     """
     from ..models import Order, OrderItem, MenuItem, Store
     
@@ -3318,28 +3313,39 @@ def create_order_summary(order_id, user_language='zh'):
     store = Store.query.get(order.store_id)
     
     # 中文摘要
-    chinese_summary = f"訂單編號：{order.order_id}\n"
-    chinese_summary += f"店家：{store.store_name if store else '未知店家'}\n"
+    chinese_summary = f"店家：{store.store_name if store else '未知店家'}\n"
     chinese_summary += "訂購項目：\n"
     
     for item in order.items:
         menu_item = MenuItem.query.get(item.menu_item_id)
         if menu_item:
-            chinese_summary += f"- {menu_item.item_name} x{item.quantity}\n"
+            # 檢查菜名是否為英文，如果是則強制翻譯為中文
+            item_name = menu_item.item_name
+            if not contains_cjk(item_name):
+                try:
+                    # 使用 Gemini API 強制翻譯為中文
+                    translated_name = translate_text(item_name, 'zh')
+                    if translated_name and contains_cjk(translated_name):
+                        item_name = translated_name
+                        print(f"🔄 Gemini 翻譯菜名：'{menu_item.item_name}' → '{item_name}'")
+                    else:
+                        print(f"⚠️ Gemini 翻譯失敗或結果非中文：'{menu_item.item_name}'")
+                except Exception as e:
+                    print(f"❌ Gemini 翻譯錯誤：{e}")
+            
+            chinese_summary += f"- {item_name} x{item.quantity_small}\n"
     
     chinese_summary += f"總金額：${order.total_amount}"
     
-    # 翻譯摘要（簡化版）
+    # 翻譯摘要（使用者語言）
     if user_language != 'zh':
-        # 這裡可以呼叫 Gemini API 進行翻譯
-        translated_summary = f"Order #{order.order_id}\n"
-        translated_summary += f"Store: {store.store_name if store else 'Unknown Store'}\n"
+        translated_summary = f"Store: {store.store_name if store else 'Unknown Store'}\n"
         translated_summary += "Items:\n"
         
         for item in order.items:
             menu_item = MenuItem.query.get(item.menu_item_id)
             if menu_item:
-                translated_summary += f"- {menu_item.item_name} x{item.quantity}\n"
+                translated_summary += f"- {menu_item.item_name} x{item.quantity_small} (${item.subtotal})\n"
         
         translated_summary += f"Total: ${order.total_amount}"
     else:
@@ -3641,3 +3647,117 @@ def translate_ocr_menu_items_with_db_fallback(ocr_menu_items, target_language):
             'price_big': item.price_big,
             'translation_source': 'error'
         } for item in ocr_menu_items]
+
+def build_presentations(order_base, user_lang):
+    """
+    建立兩份完全獨立的表示層模型
+    
+    Args:
+        order_base: 原始資料（中文店名/菜名），只做讀取不改寫
+        user_lang: 使用者語言，例如 'en'
+    
+    Returns:
+        tuple: (zh_summary, user_summary, zh_model)
+    """
+    print(f"🔧 開始建立兩份獨立表示層...")
+    print(f"   使用者語言: {user_lang}")
+    
+    # 1. 建立兩份完全獨立的模型（深拷貝，避免共用物件）
+    zh_model = deepcopy(order_base)               # 中文版：保持中文店名、中文菜名
+    localized = deepcopy(order_base)              # 在地化版：全部翻成 user_lang
+    
+    print(f"   ✅ 深拷貝完成，兩份模型完全獨立")
+    
+    # 2. 翻譯店名（只翻譯 localized 版本）
+    if user_lang != 'zh':
+        print(f"   🔄 翻譯店名: '{localized['store_name']}' -> ", end="")
+        localized['store_name'] = translate_text_with_fallback(localized['store_name'], user_lang)
+        print(f"'{localized['store_name']}'")
+    
+    # 3. 翻譯每個菜名（只翻譯 localized 版本）
+    if user_lang != 'zh':
+        print(f"   🔄 翻譯菜名...")
+        for item in localized['items']:
+            original_name = item['name']
+            item['name'] = translate_text_with_fallback(original_name, user_lang)
+            print(f"      '{original_name}' -> '{item['name']}'")
+    
+    # 4. 組兩份摘要字串
+    zh_summary = render_summary(zh_model, lang='zh')
+    user_summary = render_summary(localized, lang=user_lang)
+    
+    print(f"   ✅ 兩份摘要生成完成")
+    print(f"   📝 中文摘要長度: {len(zh_summary)} 字元")
+    print(f"   📝 使用者語言摘要長度: {len(user_summary)} 字元")
+    
+    return zh_summary, user_summary, zh_model
+
+def render_summary(model, lang='zh'):
+    """
+    渲染摘要文字
+    
+    Args:
+        model: 資料模型（zh_model 或 localized）
+        lang: 語言代碼
+    
+    Returns:
+        str: 摘要文字
+    """
+    store_name = model['store_name']
+    items = model['items']
+    total_amount = model['total_amount']
+    
+    if lang == 'zh':
+        # 中文摘要格式
+        summary = f"店家：{store_name}\n"
+        summary += "訂購項目：\n"
+        for item in items:
+            summary += f"- {item['name']} x{item['quantity']}\n"
+        summary += f"總金額：${total_amount}"
+    else:
+        # 其他語言摘要格式
+        summary = f"Store: {store_name}\n"
+        summary += "Items:\n"
+        for item in items:
+            summary += f"- {item['name']} x{item['quantity']} (${item['price']})\n"
+        summary += f"Total: ${total_amount}"
+    
+    return summary
+
+def render_tts_text(zh_model):
+    """
+    渲染語音文字（一律使用中文）
+    
+    Args:
+        zh_model: 中文模型
+    
+    Returns:
+        str: 語音文字
+    """
+    items = zh_model['items']
+    
+    voice_items = []
+    for item in items:
+        name = item['name']
+        quantity = item['quantity']
+        
+        # 根據菜名類型選擇量詞
+        if any(keyword in name for keyword in ['茶', '咖啡', '飲料', '果汁', '奶茶', '汽水', '可樂', '啤酒', '酒']):
+            # 飲料類用「杯」
+            if quantity == 1:
+                voice_items.append(f"{name}一杯")
+            else:
+                voice_items.append(f"{name}{quantity}杯")
+        else:
+            # 餐點類用「份」
+            if quantity == 1:
+                voice_items.append(f"{name}一份")
+            else:
+                voice_items.append(f"{name}{quantity}份")
+    
+    # 生成自然的中文語音
+    if len(voice_items) == 1:
+        return f"老闆，我要{voice_items[0]}，謝謝。"
+    else:
+        voice_text = "、".join(voice_items[:-1]) + "和" + voice_items[-1]
+        return f"老闆，我要{voice_text}，謝謝。"

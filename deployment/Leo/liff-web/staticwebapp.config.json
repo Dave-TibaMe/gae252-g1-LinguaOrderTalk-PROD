@@ -1,0 +1,17 @@
+{
+  "globalHeaders": {
+    "cache-control": "no-cache, no-store, must-revalidate"
+  },
+  "routes": [
+    {
+      "route": "/*",
+      "headers": {
+        "cache-control": "no-cache"
+      }
+    }
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/images/*", "/css/*", "/js/*", "/api/*"]
+  }
+}

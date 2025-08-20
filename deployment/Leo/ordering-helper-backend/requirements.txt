@@ -7,7 +7,8 @@ python-dotenv==1.0.0
 PyMySQL==1.1.0
 line-bot-sdk==3.5.0
 google-genai==1.28.0
-azure-cognitiveservices-speech==1.34.0
+# azure-cognitiveservices-speech==1.34.0  # 已替換為 gTTS
+gTTS==2.4.0
 Pillow==10.0.1
 Werkzeug==2.3.7
 gunicorn==21.2.0
@@ -18,3 +19,6 @@ google-cloud-storage==2.10.0
 
 # Google Cloud Translation API (用於多語言支援)
 google-cloud-translate==3.12.0
+
+# 音訊處理 (用於計算音訊長度)
+pydub==0.25.1

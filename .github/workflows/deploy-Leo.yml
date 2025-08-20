@@ -1,4 +1,4 @@
-# deploy-Leo.yml 20250820 1126
+# deploy-Leo.yml 20250820 1239
 
 # GitHub Actions workflow 的名稱
 name: Deploy to Google Cloud Run
@@ -30,6 +30,7 @@ env:
   GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
   FLASK_ENV: ${{ secrets.FLASK_ENV }}
   FLASK_DEBUG: ${{ secrets.FLASK_DEBUG }}
+  GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
   
 
 # 定義工作
@@ -72,6 +73,6 @@ jobs:
             GCS_BUCKET_NAME=${{ env.GCS_BUCKET_NAME }}
             FLASK_ENV=${{ env.FLASK_ENV }}
             FLASK_DEBUG=${{ env.FLASK_DEBUG }}
+            GOOGLE_CLOUD_PROJECT=${{ env.GOOGLE_CLOUD_PROJECT }}
 
             
-

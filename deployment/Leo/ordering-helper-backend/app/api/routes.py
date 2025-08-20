@@ -13,7 +13,7 @@
 # =============================================================================
 
 from flask import Blueprint, jsonify, request, send_file, current_app, send_from_directory
-from ..models import db, Store, Menu, MenuItem, MenuTranslation, User, Order, OrderItem, StoreTranslation, OCRMenu, OCRMenuItem, VoiceFile, Language
+from ..models import db, Store, Menu, MenuItem, MenuTranslation, User, Order, OrderItem, StoreTranslation, OCRMenu, OCRMenuItem, OCRMenuTranslation, VoiceFile, Language
 from .helpers import process_menu_with_gemini, generate_voice_order, create_order_summary, save_uploaded_file, VOICE_DIR
 import json
 import os
@@ -30,7 +30,7 @@ def handle_cors_preflight():
     """處理 CORS 預檢請求"""
     response = jsonify({'message': 'OK'})
     response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+    response.headers.add('Access-Control-Allow-Headers', '*')  # 允許所有 headers
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
     response.headers.add('Access-Control-Max-Age', '3600')
     return response, 200
@@ -87,18 +87,59 @@ def translate_text():
         if not contents or not target:
             return jsonify({"error": "contents/target required"}), 400
         
-        # 允許 BCP47，先取主要語言碼給 API（ex: "fr-FR" -> "fr"）
-        target_short = target.split('-')[0]
+        # 使用新的翻譯服務進行語言碼正規化
+        from .translation_service import normalize_lang, translate_texts
+        normalized_target = normalize_lang(target)
         
-        # 使用 Google Cloud Translation API
-        from .helpers import translate_text_batch
-        translated_texts = translate_text_batch(contents, target_short, source)
+        # 批次翻譯
+        translated_texts = translate_texts(contents, normalized_target, source)
         
-        return jsonify({"translated": translated_texts})
+        response = jsonify({"translated": translated_texts})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Cache-Control', 'public, max-age=300')  # 5分鐘快取
+        return response
         
     except Exception as e:
         current_app.logger.error(f"翻譯API錯誤: {str(e)}")
+        # 即使出錯也要回傳 200，避免前端卡住
+        response = jsonify({"translated": contents, "error": "翻譯失敗，回傳原文"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
         return jsonify({"error": f"翻譯失敗: {str(e)}"}), 500
+
+@api_bp.route('/api/translate', methods=['POST', 'OPTIONS'])
+def translate_single_text():
+    """翻譯單一文字（前端 fallback 用）"""
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    try:
+        data = request.get_json(silent=True) or {}
+        text = data.get('text', '')
+        target = request.args.get('target', 'en')
+        
+        if not text:
+            response = jsonify({"translated": ""})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 200
+        
+        # 使用新的翻譯服務
+        from .translation_service import normalize_lang, translate_text
+        normalized_target = normalize_lang(target)
+        translated = translate_text(text, normalized_target)
+        
+        response = jsonify({"translated": translated})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Cache-Control', 'public, max-age=300')  # 5分鐘快取
+        return response, 200
+        
+    except Exception as e:
+        current_app.logger.error(f"單一文字翻譯失敗: {str(e)}")
+        # 即使出錯也要回傳 200，避免前端卡住
+        response = jsonify({"translated": text, "error": "翻譯失敗，回傳原文"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
 
 @api_bp.route('/stores/resolve-old', methods=['GET'])
 def resolve_store_old():
@@ -193,6 +234,10 @@ def get_menu(store_id):
         # 取得使用者語言偏好（支援任意 BCP47 語言碼）
         user_language = request.args.get('lang', 'zh')
         
+        # 加入最小日誌
+        current_app.logger.info("get-menu store_id=%s, user_lang=%s -> found=%s, items=%d",
+                                store_id, user_language, True, 0)  # 先設為 0，後面會更新
+        
         # 支援 Accept-Language header 作為 fallback
         if not user_language or user_language == 'zh':
             accept_language = request.headers.get('Accept-Language', '')
@@ -202,24 +247,9 @@ def get_menu(store_id):
                 if first_lang and first_lang != 'zh':
                     user_language = first_lang
         
-        # 語言碼正規化：支援 BCP47 格式
-        def normalize_language_code(lang_code):
-            """將語言碼正規化為 Google Cloud Translation API 支援的格式"""
-            if not lang_code:
-                return 'zh'
-            
-            # 支援的語言直接返回
-            supported_langs = ['zh', 'en', 'ja', 'ko']
-            if lang_code in supported_langs:
-                return lang_code
-            
-            # 處理 BCP47 格式 (如 'fr-FR', 'de-DE')
-            if '-' in lang_code:
-                return lang_code.split('-')[0]
-            
-            return lang_code
-        
-        normalized_lang = normalize_language_code(user_language)
+        # 使用新的翻譯服務進行語言碼正規化
+        from .translation_service import normalize_lang, translate_text
+        normalized_lang = normalize_lang(user_language)
         
         # 先檢查店家是否存在
         store = Store.query.get(store_id)
@@ -254,6 +284,8 @@ def get_menu(store_id):
             }), 404
         
         if not menu_items:
+            current_app.logger.info("get-menu store_id=%s, user_lang=%s -> found=%s, items=%d",
+                                    store_id, user_language, False, 0)
             return jsonify({
                 "error": "此店家目前沒有菜單項目",
                 "store_id": store_id,
@@ -261,24 +293,50 @@ def get_menu(store_id):
                 "message": "請使用菜單圖片上傳功能來建立菜單"
             }), 404
         
-        # 使用新的翻譯功能（優先使用資料庫翻譯）
-        from .helpers import translate_menu_items_with_db_fallback
-        translated_menu = translate_menu_items_with_db_fallback(menu_items, user_language)
+        # 使用新的 DTO 模型處理雙語菜單項目
+        from .dto_models import build_menu_item_dto
+        translated_items = []
+        current_app.logger.info(f"開始處理雙語菜單項目，目標語言: {normalized_lang}")
         
-        # 統計翻譯來源
-        db_translations = sum(1 for item in translated_menu if item['translation_source'] == 'database')
-        ai_translations = sum(1 for item in translated_menu if item['translation_source'] == 'ai')
+        for item in menu_items:
+            # 使用 alias 查詢，將 item_name 作為 name_source
+            # 這樣可以保留原文，同時提供翻譯版本
+            menu_item_dto = build_menu_item_dto(item, normalized_lang)
+            
+            # 如果需要翻譯，使用翻譯服務
+            if not normalized_lang.startswith('zh'):
+                from .translation_service import translate_text
+                translated_name = translate_text(menu_item_dto.name_source, normalized_lang)
+                menu_item_dto.name_ui = translated_name
+                
+                # 記錄翻譯結果
+                current_app.logger.info(f"翻譯: '{menu_item_dto.name_source}' -> '{translated_name}' (語言: {normalized_lang})")
+            
+            # 轉換為字典格式，明確分離 native 和 display 欄位
+            translated_item = {
+                "id": menu_item_dto.id,
+                # Native 欄位（資料庫原文，用於中文摘要和語音）
+                "name_native": menu_item_dto.name_source,  # 原始中文名稱
+                "original_name": menu_item_dto.name_source,  # 向後兼容
+                # Display 欄位（使用者語言，用於 UI 顯示）
+                "name": menu_item_dto.name_ui,  # 使用者語言顯示名稱
+                "translated_name": menu_item_dto.name_ui,  # 向後兼容
+                # 其他欄位
+                "price_small": menu_item_dto.price_small,
+                "price_large": menu_item_dto.price_big,
+                "category": "",
+                "original_category": ""
+            }
+            translated_items.append(translated_item)
+        
+        current_app.logger.info("get-menu store_id=%s, user_lang=%s -> found=%s, items=%d",
+                                store_id, user_language, True, len(translated_items))
         
         return jsonify({
             "store_id": store_id,
             "user_language": user_language,
             "normalized_language": normalized_lang,
-            "menu_items": translated_menu,
-            "translation_stats": {
-                "database_translations": db_translations,
-                "ai_translations": ai_translations,
-                "total_items": len(translated_menu)
-            }
+            "menu_items": translated_items
         })
         
     except Exception as e:
@@ -301,24 +359,9 @@ def get_menu_by_place_id(place_id):
                 if first_lang and first_lang != 'zh':
                     user_language = first_lang
         
-        # 語言碼正規化：支援 BCP47 格式
-        def normalize_language_code(lang_code):
-            """將語言碼正規化為 Google Cloud Translation API 支援的格式"""
-            if not lang_code:
-                return 'zh'
-            
-            # 支援的語言直接返回
-            supported_langs = ['zh', 'en', 'ja', 'ko']
-            if lang_code in supported_langs:
-                return lang_code
-            
-            # 處理 BCP47 格式 (如 'fr-FR', 'de-DE')
-            if '-' in lang_code:
-                return lang_code.split('-')[0]
-            
-            return lang_code
-        
-        normalized_lang = normalize_language_code(user_language)
+        # 使用新的翻譯服務進行語言碼正規化
+        from .translation_service import normalize_lang, translate_text
+        normalized_lang = normalize_lang(user_language)
         
         # 先根據 place_id 找到店家
         store = Store.query.filter_by(place_id=place_id).first()
@@ -355,88 +398,193 @@ def get_menu_by_place_id(place_id):
             }), 404
         
         if not menu_items:
-            return jsonify({
-                "error": "此店家目前沒有菜單項目",
-                "store_id": store.store_id,
-                "place_id": place_id,
-                "store_name": store.store_name,
-                "message": "請使用菜單圖片上傳功能來建立菜單"
-            }), 404
+                    return jsonify({
+            "error": "此店家目前沒有菜單項目",
+            "store_id": store.store_id,
+            "place_id": place_id,
+            "store_name": store.store_name,
+            "message": "請使用菜單圖片上傳功能來建立菜單"
+        }), 404
         
-        # 使用新的翻譯功能（優先使用資料庫翻譯）
-        from .helpers import translate_menu_items_with_db_fallback
-        translated_menu = translate_menu_items_with_db_fallback(menu_items, user_language)
+        # 使用新的翻譯服務翻譯菜單項目
+        translated_items = []
+        current_app.logger.info(f"開始翻譯菜單項目，目標語言: {normalized_lang}")
         
-        # 統計翻譯來源
-        db_translations = sum(1 for item in translated_menu if item['translation_source'] == 'database')
-        ai_translations = sum(1 for item in translated_menu if item['translation_source'] == 'ai')
+        for item in menu_items:
+            original_name = item.item_name
+            translated_name = translate_text(original_name, normalized_lang)
+            
+            # 記錄翻譯結果
+            current_app.logger.info(f"翻譯: '{original_name}' -> '{translated_name}' (語言: {normalized_lang})")
+            
+            translated_item = {
+                "id": item.menu_item_id,
+                "name": translated_name,
+                "translated_name": translated_name,  # 為了前端兼容性
+                "original_name": original_name,
+                "price_small": item.price_small,
+                "price_large": item.price_big,  # 修正：使用 price_big 而不是 price_large
+                "category": "",  # 修正：資料庫中沒有 category 欄位
+                "original_category": ""
+            }
+            translated_items.append(translated_item)
         
         return jsonify({
             "store_id": store.store_id,
             "place_id": place_id,
             "user_language": user_language,
-            "menu_items": translated_menu,
-            "translation_stats": {
-                "database_translations": db_translations,
-                "ai_translations": ai_translations,
-                "total_items": len(translated_menu)
-            }
+            "normalized_language": normalized_lang,
+            "menu_items": translated_items
         })
         
     except Exception as e:
         return jsonify({'error': '無法載入菜單'}), 500
 
-@api_bp.route('/stores/check-partner-status', methods=['GET'])
+@api_bp.route('/stores/check-partner-status', methods=['GET', 'OPTIONS'])
 def check_partner_status():
     """檢查店家合作狀態（支援 store_id 或 place_id）"""
-    store_id = request.args.get('store_id', type=int)
-    place_id = request.args.get('place_id')
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
     
-    if not store_id and not place_id:
-        return jsonify({"error": "需要提供 store_id 或 place_id"}), 400
+    # 加入最小日誌
+    store_id = request.args.get('store_id', type=int)
+    user_lang = request.headers.get('X-LIFF-User-Lang', 'en')
+    current_app.logger.info("check-partner-status store_id=%s, user_lang=%s", store_id, user_lang)
+    place_id = request.args.get('place_id')
+    name = request.args.get('name', '')
+    lang = request.args.get('lang', 'en')
+    
+    # 使用新的翻譯服務進行語言碼正規化
+    from .translation_service import normalize_lang, translate_text
+    normalized_lang = normalize_lang(lang)
     
     try:
         store = None
         
         if store_id:
             # 使用 store_id 查詢
+            current_app.logger.info(f"查詢店家 store_id={store_id}")
             store = Store.query.get(store_id)
+            if store:
+                current_app.logger.info(f"找到店家: {store.store_name}, partner_level={store.partner_level}")
+            else:
+                current_app.logger.warning(f"找不到店家 store_id={store_id}")
         elif place_id:
             # 使用 place_id 查詢
+            current_app.logger.info(f"查詢店家 place_id={place_id}")
             store = Store.query.filter_by(place_id=place_id).first()
+            if store:
+                current_app.logger.info(f"找到店家: {store.store_name}, partner_level={store.partner_level}")
+            else:
+                current_app.logger.warning(f"找不到店家 place_id={place_id}")
         
-        if not store:
-            return jsonify({"error": "找不到店家"}), 404
-        
-        # 檢查是否有菜單（需要實際查詢菜單項目）
-        try:
-            # 先查詢店家的菜單
-            menus = Menu.query.filter(Menu.store_id == store.store_id).all()
-            has_menu = False
+        if store:
+            # 找到店家
+            original_name = store.store_name
+            translated_name = translate_text(original_name, normalized_lang)
             
-            if menus:
-                # 檢查菜單是否有項目
-                menu_ids = [menu.menu_id for menu in menus]
-                menu_items = MenuItem.query.filter(
-                    MenuItem.menu_id.in_(menu_ids),
-                    MenuItem.price_small > 0  # 只計算有價格的項目
-                ).count()
-                has_menu = menu_items > 0
-        except Exception as e:
-            print(f"檢查菜單時發生錯誤: {e}")
+            # 合作店家判斷：只要 partner_level > 0 就是合作店家
+            is_partner = store.partner_level > 0
+            
+            # 只有合作店家才檢查菜單
             has_menu = False
+            translated_menu = []
+            
+            if is_partner:
+                # 合作店家：檢查是否有菜單
+                try:
+                    menus = Menu.query.filter(Menu.store_id == store.store_id).all()
+                    
+                    if menus:
+                        menu_ids = [menu.menu_id for menu in menus]
+                        menu_items = MenuItem.query.filter(
+                            MenuItem.menu_id.in_(menu_ids),
+                            MenuItem.price_small > 0
+                        ).all()
+                        has_menu = len(menu_items) > 0
+                        
+                        # 如果有菜單項目，提供翻譯後的菜單
+                        if menu_items:
+                            for item in menu_items:
+                                translated_item = {
+                                    "id": item.menu_item_id,
+                                    "name": translate_text(item.item_name, normalized_lang),
+                                    "translated_name": translate_text(item.item_name, normalized_lang),  # 為了前端兼容性
+                                    "original_name": item.item_name,
+                                    "price_small": item.price_small,
+                                    "price_large": item.price_big,  # 修正：使用 price_big 而不是 price_large
+                                    "category": "",  # 修正：資料庫中沒有 category 欄位
+                                    "original_category": ""
+                                }
+                                translated_menu.append(translated_item)
+                except Exception as e:
+                    current_app.logger.warning(f"檢查菜單時發生錯誤: {e}")
+                    has_menu = False
+            else:
+                # 非合作店家：強制沒有菜單，必須使用拍照模式
+                current_app.logger.info(f"非合作店家 {store.store_name} (partner_level={store.partner_level})，強制進入拍照模式")
+                has_menu = False
+                translated_menu = []
+            
+            response_data = {
+                "store_id": store.store_id,
+                "store_name": store.store_name,
+                "display_name": translated_name,  # 前端優先使用的欄位
+                "translated_name": translated_name,  # 前端也會檢查的欄位
+                "original_name": original_name,
+                "place_id": store.place_id,
+                "partner_level": store.partner_level,
+                "is_partner": is_partner,  # 合作店家判斷
+                "has_menu": has_menu,
+                "translated_menu": translated_menu,  # 提供翻譯後的菜單
+                "supported_languages": ["zh", "en", "ja", "ko"],  # 支援的語言清單
+                "auto_translate": True  # 若無語言時會自動翻譯
+            }
+        else:
+            # 找不到店家，回傳非合作狀態
+            original_name = name or f"店家_{place_id[:8] if place_id else 'unknown'}"
+            translated_name = translate_text(original_name, normalized_lang)
+            
+            response_data = {
+                "store_id": None,
+                "store_name": "",
+                "display_name": translated_name,  # 前端優先使用的欄位
+                "translated_name": translated_name,  # 前端也會檢查的欄位
+                "original_name": original_name,
+                "place_id": place_id,
+                "partner_level": 0,
+                "is_partner": False,
+                "has_menu": False
+            }
         
-        return jsonify({
-            "store_id": store.store_id,
-            "store_name": store.store_name,
-            "place_id": store.place_id,
-            "partner_level": store.partner_level,
-            "is_partner": store.partner_level > 0,
-            "has_menu": has_menu
-        })
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Cache-Control', 'public, max-age=300')  # 5分鐘快取
+        return response, 200
         
     except Exception as e:
-        return jsonify({'error': '無法檢查店家狀態'}), 500
+        current_app.logger.error(f"檢查店家狀態失敗: {str(e)}")
+        # 明確 fallback，避免 5xx 讓前端停在 loading
+        original_name = name or f"店家_{place_id[:8] if place_id else 'unknown'}"
+        translated_name = translate_text(original_name, normalized_lang)
+        
+        response_data = {
+            "store_id": None,
+            "store_name": "",
+            "display_name": translated_name,  # 前端優先使用的欄位
+            "translated_name": translated_name,  # 前端也會檢查的欄位
+            "original_name": original_name,
+            "place_id": place_id,
+            "partner_level": 0,
+            "is_partner": False,
+            "has_menu": False,
+            "error": "檢查店家狀態失敗，使用預設值"
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
 
 @api_bp.route('/menu/process-ocr', methods=['POST', 'OPTIONS'])
 def process_menu_ocr():
@@ -933,7 +1081,9 @@ def create_order():
                     order_items_to_create.append(OrderItem(
                         menu_item_id=temp_menu_item.menu_item_id,
                         quantity_small=quantity,
-                        subtotal=subtotal
+                        subtotal=subtotal,
+                        original_name=item_name,        # 設定中文原始名稱
+                        translated_name=item_name       # 設定翻譯名稱（預設相同）
                     ))
                     
                     # 建立訂單明細供確認
@@ -992,7 +1142,9 @@ def create_order():
                 order_items_to_create.append(OrderItem(
                     menu_item_id=menu_item.menu_item_id,
                     quantity_small=quantity,
-                    subtotal=subtotal
+                    subtotal=subtotal,
+                    original_name=menu_item.item_name,  # 設定中文原始名稱
+                    translated_name=menu_item.item_name  # 設定翻譯名稱（預設相同）
                 ))
                 
                 # 建立訂單明細供確認
@@ -2116,6 +2268,8 @@ def get_all_stores():
 @api_bp.route('/upload-menu-image', methods=['GET', 'POST', 'OPTIONS'])
 def upload_menu_image():
     """上傳菜單圖片並進行 OCR 處理"""
+    t0 = time.time()
+    
     # 處理 OPTIONS 預檢請求
     if request.method == 'OPTIONS':
         return handle_cors_preflight()
@@ -2214,6 +2368,14 @@ def upload_menu_image():
         print("開始使用 Gemini API 處理圖片...")
         result = process_menu_with_gemini(filepath, target_lang)
         
+        # 加入詳細日誌，幫助診斷 OCR 問題
+        print(f"🔍 OCR 原始結果: {result}")
+        if result and 'menu_items' in result:
+            print(f"📋 菜單項目數量: {len(result['menu_items'])}")
+            if result['menu_items']:
+                print(f"📋 第一個項目結構: {result['menu_items'][0]}")
+                print(f"📋 第一個項目 keys: {list(result['menu_items'][0].keys())}")
+        
         # 檢查處理結果
         if result and result.get('success', False):
             
@@ -2285,12 +2447,28 @@ def upload_menu_image():
                 if price <= 0:
                     continue
                 
+                # 正規化菜單項目格式，確保前端能正確解析
+                original_name = str(item.get('original_name', '') or item.get('name', {}).get('original', '') or '')
+                translated_name = str(item.get('translated_name', '') or item.get('name', {}).get('translated', '') or '')
+                
+                # 如果沒有原始名稱，嘗試其他可能的欄位
+                if not original_name:
+                    original_name = str(item.get('name', '') or item.get('title', '') or item.get('item_name', '') or '')
+                
+                # 如果沒有翻譯名稱，使用原始名稱
+                if not translated_name:
+                    translated_name = original_name
+                
                 dynamic_menu.append({
                     'temp_id': f"temp_{processing_id}_{i}",
                     'id': f"temp_{processing_id}_{i}",  # 前端可能需要 id 欄位
-                    'original_name': str(item.get('original_name', '') or ''),
-                    'translated_name': str(item.get('translated_name', '') or ''),
-                    'en_name': str(item.get('translated_name', '') or ''),  # 英語名稱
+                    'original_name': original_name,
+                    'translated_name': translated_name,
+                    'en_name': translated_name,  # 英語名稱
+                    'name': {  # 新增前端支援的新格式
+                        'original': original_name,
+                        'translated': translated_name
+                    },
                     'price': price,
                     'price_small': price,  # 小份價格
                     'price_large': price,  # 大份價格
@@ -2304,81 +2482,48 @@ def upload_menu_image():
                     'processing_id': processing_id
                 })
             
+            # 僅回傳必要字段，避免過大與難序列化物件
             response_data = {
-                "message": "菜單處理成功",
+                "ok": True,
                 "processing_id": processing_id,
-                "store_info": result.get('store_info', {}),
                 "menu_items": dynamic_menu,
-                "total_items": len(dynamic_menu),
-                "target_language": target_lang,
-                "processing_notes": result.get('processing_notes', ''),
-                "store_id": store_db_id,  # 加入解析後的整數 store_id
-                "original_store_id": raw_store_id  # 保留原始輸入的 store_id
+                "count": len(dynamic_menu),
+                "elapsed_sec": round(time.time() - t0, 1),
+                "store_id": store_db_id,
+                "target_language": target_lang
             }
-            
-            # 如果儲存到資料庫，加入相關資訊
-            if ocr_menu_id:
-                response_data.update({
-                    "ocr_menu_id": ocr_menu_id,
-                    "saved_to_database": True
-                })
             
             response = jsonify(response_data)
             response.headers.add('Access-Control-Allow-Origin', '*')
             
-            # 加入 API 回應的除錯 log
-            print(f"🎉 API 成功回應 201 Created")
-            print(f"📊 回應統計:")
-            print(f"  - 處理ID: {processing_id}")
-            print(f"  - 菜單項目數: {len(dynamic_menu)}")
-            print(f"  - 目標語言: {target_lang}")
-            print(f"  - 店家資訊: {result.get('store_info', {})}")
-            print(f"  - 處理備註: {result.get('processing_notes', '')}")
+            print(f"🎉 API 成功回應 200 OK")
+            print(f"📊 回應統計: 處理ID={processing_id}, 項目數={len(dynamic_menu)}, 耗時={round(time.time() - t0, 1)}s")
             
-            return response, 201
+            return response, 200
         else:
-            
-            # 檢查是否是 JSON 解析錯誤或其他可恢復的錯誤
+            # 處理失敗情況
             error_message = result.get('error', '菜單處理失敗，請重新拍攝清晰的菜單照片')
-            processing_notes = result.get('processing_notes', '')
             
-            # 如果是 JSON 解析錯誤或其他可恢復的錯誤，返回 422
-            if 'JSON 解析失敗' in error_message or 'extra_forbidden' in error_message:
-                print(f"❌ API 返回 422 錯誤")
-                print(f"🔍 錯誤詳情:")
-                print(f"  - 錯誤訊息: {error_message}")
-                print(f"  - 處理備註: {processing_notes}")
-                print(f"  - 處理ID: {processing_id}")
-                
-                response = jsonify({
-                    "error": error_message,
-                    "processing_notes": processing_notes
-                })
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response, 422
-            else:
-                # 其他錯誤返回 500
-                print(f"❌ API 返回 500 錯誤")
-                print(f"🔍 錯誤詳情:")
-                print(f"  - 錯誤訊息: {error_message}")
-                print(f"  - 處理備註: {processing_notes}")
-                print(f"  - 處理ID: {processing_id}")
-                
-                response = jsonify({
-                    "error": error_message,
-                    "processing_notes": processing_notes
-                })
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response, 500
+            print(f"❌ API 返回 500 錯誤: {error_message}")
+            
+            response = jsonify({
+                "ok": False,
+                "error": error_message,
+                "elapsed_sec": round(time.time() - t0, 1)
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 500
             
     except Exception as e:
         print(f"OCR處理失敗：{e}")
         response = jsonify({
+            'ok': False,
             'error': '檔案處理失敗',
-            'details': str(e) if current_app.debug else '請稍後再試'
+            'details': str(e) if current_app.debug else '請稍後再試',
+            'elapsed_sec': round(time.time() - t0, 1)
         })
         response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 422
+        return response, 500
 
 @api_bp.route('/debug/order-data', methods=['POST', 'OPTIONS'])
 def debug_order_data():
@@ -3149,21 +3294,25 @@ def test_line_bot():
 
 @api_bp.route('/voices/<path:filename>')
 def serve_voice(filename):
-    """供外部（Line Bot）GET WAV 檔用"""
+    """供外部（Line Bot）GET 語音檔用"""
     try:
         from .helpers import VOICE_DIR
         import os
+        from flask import send_file, make_response
+        from werkzeug.utils import secure_filename
+        import mimetypes
         
-        # 安全性檢查：只允許 .wav 檔案
-        if not filename.endswith('.wav'):
+        # 安全性檢查：只允許 .mp3 和 .wav 檔案
+        if not (filename.endswith('.mp3') or filename.endswith('.wav')):
             return jsonify({"error": "不支援的檔案格式"}), 400
         
         # 防止路徑遍歷攻擊
-        if '..' in filename or '/' in filename:
+        safe_filename = secure_filename(filename)
+        if '..' in safe_filename or '/' in safe_filename:
             return jsonify({"error": "無效的檔案名稱"}), 400
         
         # 構建完整檔案路徑
-        file_path = os.path.join(VOICE_DIR, filename)
+        file_path = os.path.join(VOICE_DIR, safe_filename)
         
         # 檢查檔案是否存在
         if not os.path.exists(file_path):
@@ -3174,12 +3323,26 @@ def serve_voice(filename):
         if file_size == 0:
             return jsonify({"error": "語音檔案為空"}), 404
         
-        # 設定適當的 headers
-        response = send_from_directory(VOICE_DIR, filename, mimetype='audio/wav')
-        response.headers['Cache-Control'] = 'public, max-age=1800'  # 30分鐘快取
-        response.headers['Content-Length'] = str(file_size)
+        # 根據檔案類型設定正確的 MIME type
+        if filename.endswith('.mp3'):
+            mimetype = 'audio/mpeg'
+        else:  # .wav
+            mimetype = 'audio/wav'
         
-        print(f"提供語音檔案: {filename}, 大小: {file_size} bytes")
+        # 使用 send_file 讓 Flask/werkzeug 處理 Range/ETag/Last-Modified
+        response = send_file(
+            file_path,
+            mimetype=mimetype,
+            as_attachment=False,
+            conditional=True  # 啟用 Range 與快取條件
+        )
+        
+        # 設定必要的標頭
+        response.headers["Accept-Ranges"] = "bytes"
+        response.headers["Cache-Control"] = "public, max-age=86400"  # 24小時快取
+        response.headers["Content-Length"] = str(file_size)
+        
+        print(f"提供語音檔案: {safe_filename}, 大小: {file_size} bytes, MIME: {mimetype}")
         return response
         
     except Exception as e:
@@ -3962,3 +4125,600 @@ def admin_list_ocr_menus():
         })
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response, 500
+
+@api_bp.route('/store/resolve', methods=['GET', 'OPTIONS'])
+def resolve_store_for_frontend():
+    """解析店家識別碼（前端專用，回傳合作狀態和翻譯店名）"""
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    try:
+        place_id = request.args.get('place_id')
+        name = request.args.get('name', '')
+        lang = request.args.get('lang', 'en')
+        
+        if not place_id:
+            response = jsonify({
+                "error": "需要提供 place_id 參數",
+                "usage": "/api/store/resolve?place_id=ChlJ0boght2rQjQRsH-_buCo3S4&name=店家名稱&lang=en"
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 400
+        
+        # 使用新的翻譯服務進行語言碼正規化
+        from .translation_service import normalize_lang, translate_text
+        normalized_lang = normalize_lang(lang)
+        
+        # 查詢店家
+        store = Store.query.filter_by(place_id=place_id).first()
+        
+        if store:
+            # 合作店家
+            original_name = store.store_name
+            display_name = translate_text(original_name, normalized_lang)
+            
+            response_data = {
+                "is_partner": True,
+                "store_id": store.store_id,
+                "original_name": original_name,
+                "display_name": display_name,
+                "place_id": place_id
+            }
+        else:
+            # 非合作店家
+            original_name = name or f"店家_{place_id[:8]}"
+            display_name = translate_text(original_name, normalized_lang)
+            
+            response_data = {
+                "is_partner": False,
+                "original_name": original_name,
+                "display_name": display_name,
+                "place_id": place_id
+            }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Cache-Control', 'public, max-age=300')  # 5分鐘快取
+        return response, 200
+        
+    except Exception as e:
+        current_app.logger.error(f"店家解析失敗: {str(e)}")
+        # 即使出錯也要回傳 200，避免前端卡在 Preparing...
+        fallback_name = request.args.get('name') or f"店家_{request.args.get('place_id', 'unknown')[:8]}"
+        from .translation_service import normalize_lang, translate_text
+        normalized_lang = normalize_lang(request.args.get('lang', 'en'))
+        display_name = translate_text(fallback_name, normalized_lang)
+        
+        response_data = {
+            "is_partner": False,
+            "original_name": fallback_name,
+            "display_name": display_name,
+            "place_id": request.args.get('place_id', ''),
+            "error": "店家解析失敗，使用預設值"
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
+
+@api_bp.route('/partner/menu', methods=['GET', 'OPTIONS'])
+def get_partner_menu():
+    """取得合作店家菜單（支援多語言翻譯）"""
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    try:
+        store_id = request.args.get('store_id')
+        lang = request.args.get('lang', 'en')
+        
+        if not store_id:
+            response = jsonify({
+                "error": "需要提供 store_id 參數",
+                "usage": "/api/partner/menu?store_id=123&lang=en"
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 400
+        
+        # 使用新的翻譯服務進行語言碼正規化
+        from .translation_service import normalize_lang, translate_text
+        
+        normalized_lang = normalize_lang(lang)
+        
+        # 檢查店家是否存在
+        store = Store.query.get(store_id)
+        if not store:
+            response = jsonify({"error": "找不到店家"})
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 404
+        
+        # 查詢菜單
+        menus = Menu.query.filter(Menu.store_id == store_id).all()
+        if not menus:
+            response = jsonify({
+                "error": "此店家目前沒有菜單",
+                "store_id": store_id,
+                "store_name": store.store_name
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 404
+        
+        # 查詢菜單項目
+        menu_ids = [menu.menu_id for menu in menus]
+        menu_items = MenuItem.query.filter(
+            MenuItem.menu_id.in_(menu_ids),
+            MenuItem.price_small > 0
+        ).all()
+        
+        if not menu_items:
+            response = jsonify({
+                "error": "此店家目前沒有菜單項目",
+                "store_id": store_id,
+                "store_name": store.store_name
+            })
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response, 404
+        
+        # 翻譯菜單項目
+        translated_items = []
+        for item in menu_items:
+            translated_item = {
+                "id": item.menu_item_id,
+                "name": translate_text(item.item_name, normalized_lang),
+                "translated_name": translate_text(item.item_name, normalized_lang),  # 為了前端兼容性
+                "original_name": item.item_name,
+                "price_small": item.price_small,
+                "price_large": item.price_big,  # 修正：使用 price_big 而不是 price_large
+                "category": "",  # 修正：資料庫中沒有 category 欄位
+                "original_category": ""
+            }
+            translated_items.append(translated_item)
+        
+        response_data = {
+            "store_id": store_id,
+            "store_name": store.store_name,
+            "user_language": lang,
+            "normalized_language": normalized_lang,
+            "items": translated_items
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Cache-Control', 'public, max-age=300')  # 5分鐘快取
+        return response, 200
+        
+    except Exception as e:
+        current_app.logger.error(f"菜單載入錯誤: {str(e)}")
+        # 即使出錯也要回傳 200，避免前端卡在 Preparing...
+        response_data = {
+            "store_id": request.args.get('store_id', ''),
+            "store_name": "",
+            "user_language": lang,
+            "normalized_language": normalize_lang(lang),
+            "items": [],
+            "error": "菜單載入失敗，使用預設值"
+        }
+        
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 200
+
+# 新增：暫存 OCR 資料的記憶體儲存
+_ocr_temp_storage = {}
+
+@api_bp.route('/menu/process-ocr-optimized', methods=['POST', 'OPTIONS'])
+def process_menu_ocr_optimized():
+    """
+    優化的 OCR 處理流程
+    - 直接 OCR 辨識
+    - 即時翻譯
+    - 暫存結果
+    - 不立即儲存資料庫
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    try:
+        # 檢查是否有檔案上傳
+        if 'image' not in request.files:
+            return jsonify({"error": "沒有上傳圖片"}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({"error": "沒有選擇檔案"}), 400
+        
+        # 獲取使用者語言偏好
+        line_user_id = request.form.get('line_user_id')
+        user_language = request.form.get('language', 'en')
+        
+        # 查找使用者
+        user = User.query.filter_by(line_user_id=line_user_id).first()
+        if not user:
+            return jsonify({"error": "找不到使用者"}), 404
+        
+        print(f"🔍 開始優化 OCR 處理...")
+        print(f"📋 使用者: {user.line_user_id}, 語言: {user_language}")
+        
+        # 1. OCR 辨識
+        from .helpers import process_menu_with_gemini
+        import tempfile
+        import os
+        
+        # 將上傳的文件保存到臨時文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+            file.save(temp_file.name)
+            temp_file_path = temp_file.name
+        
+        try:
+            ocr_result = process_menu_with_gemini(temp_file_path, user_language)
+        finally:
+            # 清理臨時文件
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        
+        if not ocr_result or not ocr_result.get('success') or 'menu_items' not in ocr_result:
+            error_msg = ocr_result.get('error', 'OCR 辨識失敗') if ocr_result else 'OCR 辨識失敗'
+            return jsonify({"error": error_msg}), 500
+        
+        # 2. 處理 OCR 結果
+        from .helpers import translate_text_batch, contains_cjk
+        
+        # 處理店家名稱
+        store_info = ocr_result.get('store_info', {})
+        store_name_original = store_info.get('name', '非合作店家')
+        if store_name_original and contains_cjk(store_name_original):
+            store_name_translated = translate_text_batch([store_name_original], user_language, 'zh')[0]
+        else:
+            store_name_translated = store_name_original or 'Non-partner Store'
+        
+        # 處理菜品項目
+        menu_items = ocr_result.get('menu_items', [])
+        translated_items = []
+        
+        for item in menu_items:
+            item_name_original = item.get('original_name', '')
+            item_name_translated = item.get('translated_name', '')
+            item_price = item.get('price', 0)
+            
+            # 確保有原始名稱
+            if not item_name_original:
+                continue
+            
+            # 強制確保 original_name 為中文
+            if not contains_cjk(item_name_original):
+                if contains_cjk(item_name_translated):
+                    # 如果 translated_name 是中文，則交換
+                    item_name_original, item_name_translated = item_name_translated, item_name_original
+                    print(f"🔄 交換菜名：original='{item_name_original}', translated='{item_name_translated}'")
+                else:
+                    # 如果兩個都是英文，強制翻譯 original_name 為中文
+                    try:
+                        item_name_original = translate_text_batch([item_name_original], 'zh', user_language)[0]
+                        print(f"🔄 強制翻譯為中文：'{item_name_original}'")
+                    except Exception as e:
+                        print(f"❌ 翻譯失敗：{e}")
+                        # 如果翻譯失敗，跳過這個項目
+                        continue
+            
+            # 如果沒有翻譯名稱，使用原始名稱
+            if not item_name_translated:
+                item_name_translated = item_name_original
+            
+            # 最終驗證：確保 original_name 包含中日韓字元
+            if not contains_cjk(item_name_original):
+                print(f"⚠️ 警告：original_name 仍不包含中日韓字元：'{item_name_original}'，跳過此項目")
+                continue
+            
+            translated_items.append({
+                'id': f"temp_item_{len(translated_items) + 1}",
+                'original_name': item_name_original,  # 中文原始名稱
+                'translated_name': item_name_translated,  # 翻譯後名稱
+                'price': item_price
+            })
+        
+        # 3. 生成暫存 ID
+        temp_ocr_id = f"temp_ocr_{uuid.uuid4().hex[:8]}"
+        
+        # 4. 暫存結果
+        _ocr_temp_storage[temp_ocr_id] = {
+            'user_id': user.user_id,
+            'user_language': user_language,
+            'store_name_original': store_name_original,  # 中文店名
+            'store_name_translated': store_name_translated,  # 翻譯店名
+            'items': translated_items,
+            'created_at': datetime.datetime.now(),
+            'expires_at': datetime.datetime.now() + datetime.timedelta(hours=1)  # 1小時後過期
+        }
+        
+        print(f"✅ OCR 處理完成，暫存 ID: {temp_ocr_id}")
+        print(f"📋 店家: {store_name_original} → {store_name_translated}")
+        print(f"📋 菜品數量: {len(translated_items)}")
+        
+        # 5. 返回結果
+        return jsonify({
+            "success": True,
+            "ocr_menu_id": temp_ocr_id,
+            "store_name": {
+                "original": store_name_original,
+                "translated": store_name_translated
+            },
+            "items": translated_items,
+            "message": "OCR 處理完成，請選擇菜品"
+        })
+        
+    except Exception as e:
+        print(f"❌ OCR 處理錯誤: {e}")
+        return jsonify({"error": f"OCR 處理失敗: {str(e)}"}), 500
+
+@api_bp.route('/orders/ocr-optimized', methods=['POST', 'OPTIONS'])
+def create_ocr_order_optimized():
+    """
+    優化的 OCR 訂單建立
+    - 使用暫存的 OCR 資料
+    - 生成摘要和語音
+    - 發送到 LINE Bot
+    - 不立即儲存資料庫
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"error": "請求資料為空"}), 400
+    
+    # 檢查必要欄位
+    required_fields = ['items', 'ocr_menu_id']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        return jsonify({
+            "error": "訂單資料不完整",
+            "missing_fields": missing_fields,
+            "received_data": list(data.keys())
+        }), 400
+    
+    try:
+        # 獲取暫存的 OCR 資料
+        temp_ocr_id = data.get('ocr_menu_id')
+        if temp_ocr_id not in _ocr_temp_storage:
+            return jsonify({"error": "OCR 資料已過期或不存在"}), 404
+        
+        ocr_data = _ocr_temp_storage[temp_ocr_id]
+        
+        # 檢查是否過期
+        if datetime.datetime.now() > ocr_data['expires_at']:
+            del _ocr_temp_storage[temp_ocr_id]
+            return jsonify({"error": "OCR 資料已過期"}), 410
+        
+        print(f"🔍 開始處理優化 OCR 訂單...")
+        print(f"📋 暫存 ID: {temp_ocr_id}")
+        print(f"📋 使用者 ID: {ocr_data['user_id']}")
+        print(f"📋 語言: {ocr_data['user_language']}")
+        
+        # 計算總金額
+        total_amount = 0
+        order_items_data = []
+        
+        for item_data in data['items']:
+            item_id = item_data.get('id')
+            quantity = item_data.get('quantity', 1)
+            
+            # 找到對應的 OCR 項目
+            ocr_item = None
+            for item in ocr_data['items']:
+                if item['id'] == item_id:
+                    ocr_item = item
+                    break
+            
+            if not ocr_item:
+                continue
+            
+            price = ocr_item['price']
+            subtotal = price * quantity
+            total_amount += subtotal
+            
+            order_items_data.append({
+                'original_name': ocr_item['original_name'],  # 中文原始名稱
+                'translated_name': ocr_item['translated_name'],  # 翻譯後名稱
+                'quantity': quantity,
+                'price': price,
+                'subtotal': subtotal
+            })
+        
+        print(f"📋 總金額: {total_amount}")
+        print(f"📋 項目數量: {len(order_items_data)}")
+        
+        # 生成雙語摘要
+        chinese_summary = f"店家: {ocr_data['store_name_original']}\n"
+        user_language_summary = f"Store: {ocr_data['store_name_translated']}\n"
+        
+        for item in order_items_data:
+            chinese_summary += f"{item['original_name']} x{item['quantity']} ${item['subtotal']}\n"
+            user_language_summary += f"{item['translated_name']} x{item['quantity']} ${item['subtotal']}\n"
+        
+        chinese_summary += f"總計: ${total_amount}"
+        user_language_summary += f"Total: ${total_amount}"
+        
+        print(f"📝 中文摘要:\n{chinese_summary}")
+        print(f"📝 外文摘要:\n{user_language_summary}")
+        
+        # 生成語音檔案
+        from .helpers import generate_voice_order
+        voice_file_path = generate_voice_order(chinese_summary)
+        
+        # 發送到 LINE Bot
+        from .helpers import send_complete_order_notification
+        user = User.query.get(ocr_data['user_id'])
+        if user:
+            send_complete_order_notification(
+                user.line_user_id,
+                chinese_summary,
+                user_language_summary,
+                voice_file_path,
+                ocr_data['user_language']
+            )
+        
+        # 準備儲存資料（但不立即儲存）
+        save_data = {
+            'user_id': ocr_data['user_id'],
+            'store_name': {
+                'original': ocr_data['store_name_original'],
+                'translated': ocr_data['store_name_translated']
+            },
+            'items': order_items_data,
+            'total_amount': total_amount,
+            'chinese_summary': chinese_summary,
+            'user_language_summary': user_language_summary,
+            'user_language': ocr_data['user_language'],
+            'voice_file_path': voice_file_path
+        }
+        
+        print(f"📋 準備儲存資料結構:")
+        print(f"📋 save_data 內容: {save_data}")
+        print(f"📋 order_items_data 內容: {order_items_data}")
+        
+        # 暫存儲存資料
+        _ocr_temp_storage[f"{temp_ocr_id}_save_data"] = save_data
+        print(f"✅ 儲存資料已暫存到 _ocr_temp_storage[{temp_ocr_id}_save_data]")
+        
+        print(f"✅ 優化 OCR 訂單處理完成")
+        
+        return jsonify({
+            "success": True,
+            "message": "訂單已發送到 LINE Bot",
+            "save_data_id": f"{temp_ocr_id}_save_data",
+            "chinese_summary": chinese_summary,
+            "user_language_summary": user_language_summary
+        })
+        
+    except Exception as e:
+        print(f"❌ 優化 OCR 訂單處理錯誤: {e}")
+        return jsonify({"error": f"訂單處理失敗: {str(e)}"}), 500
+
+@api_bp.route('/orders/save-ocr-data', methods=['POST', 'OPTIONS'])
+def save_ocr_data():
+    """
+    統一儲存 OCR 資料到資料庫
+    - 儲存中文菜單到 ocr_menu_items
+    - 儲存外文菜單到 ocr_menu_translations
+    - 儲存訂單到 orders 和 order_items
+    """
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        return handle_cors_preflight()
+    
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"error": "請求資料為空"}), 400
+    
+    # 檢查必要欄位
+    required_fields = ['save_data_id']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        return jsonify({
+            "error": "資料不完整",
+            "missing_fields": missing_fields
+        }), 400
+    
+    try:
+        save_data_id = data.get('save_data_id')
+        if save_data_id not in _ocr_temp_storage:
+            return jsonify({"error": "儲存資料不存在或已過期"}), 404
+        
+        save_data = _ocr_temp_storage[save_data_id]
+        
+        print(f"🔍 開始儲存 OCR 資料到資料庫...")
+        print(f"📋 儲存資料 ID: {save_data_id}")
+        print(f"📋 暫存資料內容: {save_data}")
+        print(f"📋 項目數量: {len(save_data['items'])}")
+        
+        # 檢查每個項目的資料結構
+        for i, item in enumerate(save_data['items']):
+            print(f"📋 項目 {i+1}: original_name='{item.get('original_name')}', translated_name='{item.get('translated_name')}', price={item.get('price')}, quantity={item.get('quantity')}")
+        
+        # 使用交易確保資料一致性
+        with db.session.begin():
+            # 1. 建立 OCR 菜單記錄
+            ocr_menu = OCRMenu(
+                user_id=save_data['user_id'],
+                store_id=1,  # 非合作店家使用預設 store_id
+                store_name=save_data['store_name']['original']
+            )
+            db.session.add(ocr_menu)
+            db.session.flush()  # 獲取 ocr_menu_id
+            
+            print(f"✅ 建立 OCR 菜單記錄: {ocr_menu.ocr_menu_id}")
+            
+            # 2. 儲存 OCR 菜單項目
+            for item in save_data['items']:
+                ocr_menu_item = OCRMenuItem(
+                    ocr_menu_id=ocr_menu.ocr_menu_id,
+                    item_name=item['original_name'],  # 中文菜名
+                    price_small=item['price'],
+                    translated_desc=item['translated_name']  # 外文菜名
+                )
+                db.session.add(ocr_menu_item)
+                db.session.flush()  # 獲取 ocr_menu_item_id
+                
+                # 3. 儲存翻譯資料
+                ocr_menu_translation = OCRMenuTranslation(
+                    menu_item_id=ocr_menu_item.ocr_menu_item_id,
+                    lang_code=save_data['user_language'],
+                    description=item['translated_name']
+                )
+                db.session.add(ocr_menu_translation)
+            
+            # 4. 建立訂單記錄
+            order = Order(
+                user_id=save_data['user_id'],
+                store_id=1,  # 非合作店家使用預設 store_id
+                total_amount=save_data['total_amount'],
+                status='pending'
+            )
+            db.session.add(order)
+            db.session.flush()  # 獲取 order_id
+            
+            print(f"✅ 建立訂單記錄: {order.order_id}")
+            
+            # 5. 儲存訂單項目（包含雙語摘要）
+            for i, item in enumerate(save_data['items']):
+                print(f"📋 建立 OrderItem {i+1}: original_name='{item.get('original_name')}', translated_name='{item.get('translated_name')}'")
+                
+                order_item = OrderItem(
+                    order_id=order.order_id,
+                    temp_item_id=f"ocr_{ocr_menu.ocr_menu_id}_{i+1}",
+                    temp_item_name=item['original_name'],  # 中文菜名
+                    temp_item_price=item['price'],
+                    quantity_small=item['quantity'],
+                    subtotal=item['subtotal'],
+                    original_name=item['original_name'],  # 中文菜名
+                    translated_name=item['translated_name'],  # 外文菜名
+                    is_temp_item=1
+                )
+                db.session.add(order_item)
+                print(f"✅ OrderItem {i+1} 已加入 session")
+        
+        # 清理暫存資料
+        del _ocr_temp_storage[save_data_id]
+        
+        print(f"✅ OCR 資料儲存完成")
+        print(f"📋 OCR 菜單 ID: {ocr_menu.ocr_menu_id}")
+        print(f"📋 訂單 ID: {order.order_id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "資料已成功儲存到資料庫",
+            "ocr_menu_id": ocr_menu.ocr_menu_id,
+            "order_id": order.order_id,
+            "chinese_summary": save_data['chinese_summary'],
+            "user_language_summary": save_data['user_language_summary']
+        })
+        
+    except Exception as e:
+        print(f"❌ 儲存 OCR 資料錯誤: {e}")
+        db.session.rollback()
+        return jsonify({"error": f"儲存失敗: {str(e)}"}), 500

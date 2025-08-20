@@ -9,13 +9,162 @@ const API_CONFIG = {
   USE_PROXY: true,
   
   // 方案2: 直接調用 Cloud Run (備選)
-  // CLOUD_RUN_URL: 'https://ordering-helper-backend-1095766716155.asia-east1.run.app',
-  CLOUD_RUN_URL: 'https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app',
-  
-  
+  //CLOUD_RUN_URL: 'https://ordering-helper-backend-1095766716155.asia-east1.run.app',
+  CLOUD_RUN_URL: '  https://gae252-g1-cloud-run-leo-876094834622.asia-east1.run.app',
   // Azure Static Web Apps 域名
-  // SWA_DOMAIN: 'https://green-beach-0f9762500.1.azurestaticapps.net'
-SWA_DOMAIN: 'https://proud-cliff-0c3c37b00.1.azurestaticapps.net'
+  //SWA_DOMAIN: 'https://green-beach-0f9762500.1.azurestaticapps.net'
+  SWA_DOMAIN: 'https://proud-cliff-0c3c37b00.1.azurestaticapps.net'
+};
+
+/**
+ * 載入動畫管理
+ */
+const LoadingManager = {
+  /**
+   * 顯示載入動畫
+   */
+  showLoading() {
+    // 創建載入動畫元素
+    const loadingOverlay = document.createElement('div');
+    loadingOverlay.id = 'loading-overlay';
+    loadingOverlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    `;
+    
+    const loadingSpinner = document.createElement('div');
+    loadingSpinner.style.cssText = `
+      width: 50px;
+      height: 50px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    `;
+    
+    const loadingText = document.createElement('div');
+    loadingText.textContent = '正在送出訂單...';
+    loadingText.style.cssText = `
+      color: white;
+      font-size: 16px;
+      margin-top: 20px;
+      text-align: center;
+    `;
+    
+    const loadingContainer = document.createElement('div');
+    loadingContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    `;
+    
+    // 添加 CSS 動畫
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    
+    // 組裝載入動畫
+    loadingContainer.appendChild(loadingSpinner);
+    loadingContainer.appendChild(loadingText);
+    loadingOverlay.appendChild(loadingContainer);
+    document.head.appendChild(style);
+    document.body.appendChild(loadingOverlay);
+    
+    console.log('🔄 顯示載入動畫');
+  },
+  
+  /**
+   * 隱藏載入動畫
+   */
+  hideLoading() {
+    const loadingOverlay = document.getElementById('loading-overlay');
+    if (loadingOverlay) {
+      loadingOverlay.remove();
+      console.log('✅ 隱藏載入動畫');
+    }
+  },
+  
+  /**
+   * 顯示成功訊息
+   */
+  showSuccess(message = '訂單送出成功！') {
+    this.hideLoading();
+    
+    const successOverlay = document.createElement('div');
+    successOverlay.id = 'success-overlay';
+    successOverlay.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: #4CAF50;
+      color: white;
+      padding: 20px 30px;
+      border-radius: 8px;
+      font-size: 16px;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    successOverlay.textContent = message;
+    
+    document.body.appendChild(successOverlay);
+    
+    // 3秒後自動隱藏
+    setTimeout(() => {
+      if (successOverlay.parentNode) {
+        successOverlay.remove();
+      }
+    }, 3000);
+    
+    console.log('✅ 顯示成功訊息:', message);
+  },
+  
+  /**
+   * 顯示錯誤訊息
+   */
+  showError(message = '訂單送出失敗，請重試') {
+    this.hideLoading();
+    
+    const errorOverlay = document.createElement('div');
+    errorOverlay.id = 'error-overlay';
+    errorOverlay.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: #f44336;
+      color: white;
+      padding: 20px 30px;
+      border-radius: 8px;
+      font-size: 16px;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    errorOverlay.textContent = message;
+    
+    document.body.appendChild(errorOverlay);
+    
+    // 5秒後自動隱藏
+    setTimeout(() => {
+      if (errorOverlay.parentNode) {
+        errorOverlay.remove();
+      }
+    }, 5000);
+    
+    console.log('❌ 顯示錯誤訊息:', message);
+  }
 };
 
 /**
@@ -78,23 +227,57 @@ async function apiCall(endpoint, options = {}) {
  */
 const OrderAPI = {
   /**
-   * 提交訂單
+   * 提交訂單（帶載入動畫）
    */
-  async submitOrder(orderData) {
-    return apiCall('/api/orders/simple', {
-      method: 'POST',
-      body: JSON.stringify(orderData)
-    });
+  async submitOrder(orderData, showLoading = true) {
+    try {
+      if (showLoading) {
+        LoadingManager.showLoading();
+      }
+      
+      const result = await apiCall('/api/orders/simple', {
+        method: 'POST',
+        body: JSON.stringify(orderData)
+      });
+      
+      if (showLoading) {
+        LoadingManager.showSuccess('訂單送出成功！');
+      }
+      
+      return result;
+    } catch (error) {
+      if (showLoading) {
+        LoadingManager.showError('訂單送出失敗，請重試');
+      }
+      throw error;
+    }
   },
   
   /**
-   * 提交 OCR 訂單
+   * 提交 OCR 訂單（帶載入動畫）
    */
-  async submitOcrOrder(orderData) {
-    return apiCall('/api/orders/ocr', {
-      method: 'POST',
-      body: JSON.stringify(orderData)
-    });
+  async submitOcrOrder(orderData, showLoading = true) {
+    try {
+      if (showLoading) {
+        LoadingManager.showLoading();
+      }
+      
+      const result = await apiCall('/api/orders/ocr', {
+        method: 'POST',
+        body: JSON.stringify(orderData)
+      });
+      
+      if (showLoading) {
+        LoadingManager.showSuccess('訂單送出成功！');
+      }
+      
+      return result;
+    } catch (error) {
+      if (showLoading) {
+        LoadingManager.showError('訂單送出失敗，請重試');
+      }
+      throw error;
+    }
   },
   
   /**
